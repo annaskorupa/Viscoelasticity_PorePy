@@ -23,6 +23,15 @@ class ExtraMatrixVariableMixin:
     def u2(self, domains):
         return self.equation_system.md_variable(self.u2_variable, domains)
     
+    def u2_prev(self, domains):
+        return self.equation_system.md_variable(
+            self.u2_variable, domains
+        )
+    def u_prev(self, domains):
+        return self.equation_system.md_variable(
+            self.u2_variable, domains
+        )
+
     #     # Boundary conditions - ?
     # def bc_type_u2(self, sd):
     #     # like u - ?
@@ -69,29 +78,35 @@ class ExtraConstitutiveLawMixin:
         lam = 1e9   # lambda_2
         mu = 5e8    # mu_2
         return pp.FourthOrderTensor(
-            lame_lambda=lam,
-            lame_mu=mu,
-            dim=self.nd
+            lmbda=lam,
+            mu=mu,
+            #dim=self.nd
         )
     
     
+
     def stress_u2(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
         """σ₂ = C₂ : ε(u₂)"""
-
         stress_ops = []
 
         for sd in subdomains:
-            if sd.dim != self.nd:
-                continue
+            # 1. Pobieramy zmienną u2 dla danej poddomeny
+            u2 = self.u2([sd])
+            eps_u2 =  (np.gradient(u2) + np.gradient(np.transpose(u2)))
 
-            # strain operator (this is PUBLIC API)
-            eps_u2 = self.sym_grad(self.u2([sd]))
+            # 2. Tworzymy operator gradientu symetrycznego dla konkretnej siatki
+            # To jest właśnie "wbudowana" funkcja, której szukałaś
+            #sym_grad_op = pp.ad.operators.SymmetricGradient(sd)
 
-            # material tensor
+            # 3. Obliczamy odkształcenie (strain): epsilon = sym_grad(u2)
+            #eps_u2 = sym_grad_op @ u2
+
+            # 4. Pobieramy tensor sztywności C2
             C2 = self.stiffness_tensor_u2(sd)
 
-            # Hooke law operator provided by PorePy
-            stress = self.hooke_law(eps_u2, C2)
+            # 5. Prawo Hooke'a: sigma = C2 : eps
+            # hooke_law to skrót dla podwójnego zwężenia (double contraction)
+            stress = self.hooke_law(C2, eps_u2)
 
             stress_ops.append(stress)
 
@@ -175,8 +190,16 @@ class ExtraEvolutionEquationMixin:
         u = self.displacement(subdomains)
         u2 = self.u2(subdomains)
 
-        du_dt = self.ad_time_derivative(u) #it doesn't exist!!!
-        du2_dt = self.ad_time_derivative(u2) #it doesn't exist!!!
+        # Wartości z poprzedniego kroku (znane)
+        u_prev = self.u_prev(subdomains)
+        u2_prev = self.u2_prev(subdomains)
+
+        dt = self.ad_time_step
+
+        # Definicja pochodnych czasu (Implicit Euler)
+        # d/dt u = (u - u_prev) / dt
+        du_dt = (u - u_prev) * (1 / dt)
+        du2_dt = (u2 - u2_prev) * (1 / dt)
 
         eq = self.beta * u + du_dt - du2_dt
         eq.set_name("u_u2_evolution")
