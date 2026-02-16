@@ -515,6 +515,7 @@ class ModyfiedConstitutiveLawsMomentumBalance(
         return self.mechanical_stress2(domains)
 
 class CreateVariable(pp.VariableMixin):
+
     """Variables for mixed-dimensional deformation.
 
     The variables are:
@@ -523,7 +524,7 @@ class CreateVariable(pp.VariableMixin):
 
     """
 
-    displacement2_variable: str
+    displacement2_variable: str = "u2"
     """Name of the primary variable representing the displacement in subdomains.
     Normally defined in a mixin of instance
     :class:`~porepy.models.momentum_balance.SolutionStrategyMomentumBalance`.
@@ -535,6 +536,8 @@ class CreateVariable(pp.VariableMixin):
     :class:`~porepy.models.momentum_balance.SolutionStrategyMomentumBalance`.
 
     """
+    def __init__(self):
+        self.displacement2_variable = "u2"
 
     def create_variables(self) -> None:
         """Introduces the following variables into the system:
@@ -753,8 +756,8 @@ class BodyForceMixin:
 class MomentumBalanceGeometryBC(
     ModifiedGeometry,
     ModyfiedEquation,
-    ModyfiedConstitutiveLawsMomentumBalance,
     CreateVariable,
+    ModyfiedConstitutiveLawsMomentumBalance,
     #SquareDomainOrthogonalFractures,
     ModifiedBoundaryConditions,
     #PressureSourceBC,
