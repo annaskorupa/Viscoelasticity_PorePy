@@ -17,6 +17,8 @@ from typing import Callable, Optional, Sequence, cast
 from porepy.models import contact_mechanics
 from porepy.models.abstract_equations import VariableMixin, EquationMixin, BalanceEquation
 
+import porepy.models.abstract_equations
+
 from porepy.models import constitutive_laws
 
 class ModifiedGeometry:
@@ -45,7 +47,7 @@ class ModifiedGeometry:
         Cartesian grid is the default grid type, and we therefore override this method to assign simplex instead.
 
         """
-        return self.params.get("grid_type", "cartesian")
+        return self.params.get("grid_type", "simplex")
 
     def meshing_arguments(self) -> dict:
         """Meshing arguments for md-grid creation.
@@ -79,6 +81,7 @@ class ModyfiedEquation:
         :class:`~porepy.models.constitutive_laws.ZeroGravityForce`.
 
         """
+        #set_equations: pp.EquationMixin
 
         def set_equations(self) -> None:
             """Set equations for the subdomains and interfaces for u2.
@@ -392,9 +395,9 @@ class NewLinearElasticMechanicalStress (pp.PorePyModel):
         # subdomains, and let these act as Dirichlet boundary conditions on the
         # subdomains.
         stress2 = (
-            discr.stress2() @ self.displacement2(domains)
-            + discr.bound_stress2() @ boundary_operator
-            + discr.bound_stress2()
+            discr.stress() @ self.displacement2(domains)
+            + discr.bound_stress() @ boundary_operator
+            + discr.bound_stress()
             @ proj.mortar_to_primary_avg()
             @ self.interface_displacement2(interfaces)
         )
@@ -530,14 +533,14 @@ class CreateVariable(pp.VariableMixin):
     :class:`~porepy.models.momentum_balance.SolutionStrategyMomentumBalance`.
 
     """
-    interface_displacement2_variable: str
+    interface_displacement2_variable: str = "interface_u2"
     """Name of the primary variable representing the displacement on an interface.
     Normally defined in a mixin of instance
     :class:`~porepy.models.momentum_balance.SolutionStrategyMomentumBalance`.
 
     """
-    def __init__(self):
-        self.displacement2_variable = "u2"
+    # def __init__(self):
+    #     self.displacement2_variable = "u2"
 
     def create_variables(self) -> None:
         """Introduces the following variables into the system:
@@ -554,6 +557,7 @@ class CreateVariable(pp.VariableMixin):
             name=self.displacement2_variable,
             subdomains=self.mdg.subdomains(dim=self.nd),
             tags={"si_units": "m"},
+            
         )
         self.equation_system.create_variables(
             dof_info={"cells": self.nd},
@@ -628,8 +632,6 @@ class CreateVariable(pp.VariableMixin):
         
 
 
-
-
 class ModifiedBoundaryConditions:
 
     units: pp.Units
@@ -660,6 +662,87 @@ class ModifiedBoundaryConditions:
         values[1][domain_sides.north + domain_sides.south] *= self.units.convert_units(5, "Pa")
 
         return values.ravel("F")
+    
+
+class ModifiedInitialConditionsMomentumBalance(pp.InitialConditionMixin):
+    """Mixin for providing initial values for displacement."""
+
+    displacement2: Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
+    """See :class:`VariablesMomentumBalance`."""
+
+    interface_displacement2: Callable[[list[pp.MortarGrid]], pp.ad.Operator]
+    """See :class:`VariablesMomentumBalance`."""
+
+    def set_initial_values_primary_variables(self) -> None:
+        """Method to set initial values for displacement, contact traction and interface
+        displacement at iterate index 0 after the super-call.
+
+        See also:
+
+            - :meth:`ic_values_displacement`
+            - :meth:`ic_values_interface_displacement`
+            - :meth:`ic_values_contact_traction`
+
+        """
+        # Super call for compatibility with multi-physics.
+        super().set_initial_values_primary_variables()
+
+        for sd in self.mdg.subdomains():
+            # Displacement is only defined on grids with ambient dimension.
+            if sd.dim == self.nd:
+                # Need to cast the return value to variable, because it is typed as
+                # operator.
+                self.equation_system.set_variable_values(
+                    self.ic_values_displacement2(sd),
+                    [cast(pp.ad.Variable, self.displacement2([sd]))],
+                    iterate_index=0,
+                )
+
+        # interface dispacement is only defined on fractures with codimension 1
+        for intf in self.mdg.interfaces(dim=self.nd - 1, codim=1):
+            self.equation_system.set_variable_values(
+                self.ic_values_interface_displacement2(intf),
+                [cast(pp.ad.Variable, self.interface_displacement2([intf]))],
+                iterate_index=0,
+            )
+
+    def ic_values_displacement2(self, sd: pp.Grid) -> np.ndarray:
+        """Initial values for displacement on the matrix grid.
+
+        Override this method to customize the initialization.
+
+        Note:
+            This method will only be called with the matrix grid (ambient dimension),
+            since displacement is only defined there.
+
+        Parameters:
+            sd: A subdomain in the md-grid.
+
+        Returns:
+            The initial displacement values on the matrix with
+            ``shape=(sd.num_cells * nd,)``. Defaults to zero array.
+
+        """
+        return np.zeros(sd.num_cells * self.nd)
+
+    def ic_values_interface_displacement2(self, intf: pp.MortarGrid) -> np.ndarray:
+        """Initial values for interface displacement.
+
+        Override this method to customize the initialization.
+
+        Note:
+            This method will only be called for interfaces with dimension ``nd-1`` and
+            codimension 1.
+
+        Parameters:
+            intf: A mortar grid in the md-grid.
+
+        Returns:
+            The initial displacement values on the matrix with
+            ``shape=(intf.num_cells * nd,)``. Defaults to zero array.
+
+        """
+        return np.zeros(intf.num_cells * self.nd)
 
     # def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
          
@@ -685,6 +768,82 @@ class ModifiedBoundaryConditions:
     #     # slowest.
     #      return values.ravel("F")
 
+class SolutionStrategyMomentumBalance(pp.SolutionStrategy):
+    """Solution strategy for the momentum balance.
+
+    At some point, this will be refined to be a more sophisticated (modularised)
+    solution strategy class. More refactoring may be beneficial.
+
+    Parameters:
+        params: Parameters for the solution strategy.
+
+    """
+
+    stiffness_tensor: Callable[[pp.Grid], pp.FourthOrderTensor]
+    """Function that returns the stiffness tensor of a subdomain. Normally provided by a
+    mixin of instance :class:`~porepy.models.constitutive_laws.ElasticModuli`.
+
+    """
+    bc_type_mechanics: Callable[[pp.Grid], pp.BoundaryConditionVectorial]
+    """Function that returns the boundary condition type for the momentum problem.
+    Normally provided by a mixin instance of
+    :class:`~porepy.models.momentum_balance.BoundaryConditionsMomentumBalance`.
+
+    """
+    friction_bound: Callable[[list[pp.Grid]], pp.ad.Operator]
+    """Friction bound of a fracture. Normally provided by a mixin instance of
+    :class:`~porepy.models.constitutive_laws.CoulombFrictionBound`.
+
+    """
+    characteristic_displacement: Callable[[list[pp.Grid]], pp.ad.Operator]
+    """Characteristic displacement of the problem. Normally defined in a mixin 
+    instance of either 
+    :class:`~porepy.models.constitutive_laws.CharacteristicTractionFromDisplacement`
+    or 
+    :class:`~porepy.models.constitutive_laws.CharacteristicDisplacementFromTraction`.
+
+    """
+
+    def __init__(self, params: Optional[dict] = None) -> None:
+        super().__init__(params)
+
+        # Variables
+        self.displacement2_variable: str = "u2"
+        """Name of the displacement variable."""
+
+        self.interface_displacement2_variable: str = "u2_interface"
+        """Name of the displacement variable on fracture-matrix interfaces."""
+
+        # Discretization
+        self.stress2_keyword: str = "mechanics2"
+        """Keyword for stress term.
+
+        Used to access discretization parameters and store discretization matrices.
+
+        """
+
+    def update_discretization_parameters(self) -> None:
+        """Updates the stiffness tensor and BC type for the mechanics problem."""
+
+        super().update_discretization_parameters()
+        for sd, data in self.mdg.subdomains(return_data=True):
+            if sd.dim == self.nd:
+                pp.initialize_data(
+                    sd,
+                    data,
+                    self.stress2_keyword,
+                    {
+                        "bc": self.bc_type_mechanics(sd),
+                        "fourth_order_tensor": self.stiffness_tensor(sd),
+                    },
+                )
+
+    def _is_nonlinear_problem(self) -> bool:
+        """
+        If there is no fracture, the problem is usually linear. Overwrite this function
+        if e.g. parameter nonlinearities are included.
+        """
+        return self.mdg.dim_min() < self.nd
 
 class PressureSourceBC:
     def bc_type_darcy_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
@@ -760,21 +919,37 @@ class MomentumBalanceGeometryBC(
     ModyfiedConstitutiveLawsMomentumBalance,
     #SquareDomainOrthogonalFractures,
     ModifiedBoundaryConditions,
+    ModifiedInitialConditionsMomentumBalance,
     #PressureSourceBC,
     BodyForceMixin,
+    SolutionStrategyMomentumBalance,
     pp.MomentumBalance
     ):
-    pass
+    
+    def __init__(self, params: dict | None = None):
+        """Initialize the model."""
+        super().__init__(params)
+        self.stress2_keyword: str = "mechanics"
+    
+    def update_all_boundary_conditions(self) -> None:
+        """Register stress keyword boundary conditions."""
+        super().update_all_boundary_conditions()
+        self.update_boundary_condition(self.stress2_keyword, self.bc_values_stress)
 
-model = MomentumBalanceGeometryBC()
+fluid_constants = pp.FluidComponent(viscosity=0.1, density=0.2)
+solid_constants = pp.SolidConstants(permeability=0.5, porosity=0.25)
+material_constants = {"fluid": fluid_constants, "solid": solid_constants}
+model_params = {"material_constants": material_constants}
+
+model = MomentumBalanceGeometryBC(model_params)
 pp.run_time_dependent_model(model)
 pp.plot_grid(
     model.mdg,
-    cell_value =model.displacement_variable,
+    cell_value =model.displacement2_variable,
     rgb=[1, 1, 1],
     figsize=(10, 8),
     linewidth=0.3,
-    title="displacement",
+    title="displacement2",
     plot_2d=True
 )
 
