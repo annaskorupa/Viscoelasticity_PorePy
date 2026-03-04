@@ -1,0 +1,16 @@
+{
+    "name": "dummy",
+    "image": "porepy/dev",
+    // "workspaceFolder": "/workspaces/PorePyProject",
+    // "mounts": [
+    //     "source=/workdir,target=/workdir,type=bind"
+    // ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ]
+        }
+     }
+}
