@@ -92,13 +92,19 @@ class NewVariables(pp.momentum_balance.VariablesMomentumBalance):
 
     """
 
-    displacement_variable2: str
+    #=============================================
+
+    displacement_variable2: str = "displacement_2"#! TRZEBA ZAINICJOWAĆ WARTOŚĆ TEJ ZMIENNEJ. PRZY URUCHAMIANIU PROGRAMU displacement_variable2 JEST PUSTE. NA TEN MOMENT ZADEKLAROWANY JEST WYŁĄCZNIE TYP. Dodałem stringa, aby ruszył proces inicjowania klasycznego. Wartość jest inicjowana w metodzie create_variable
+
+    #=============================================
     """Name of the primary variable representing the displacement in subdomains.
     Normally defined in a mixin of instance
     :class:`~porepy.models.momentum_balance.SolutionStrategyMomentumBalance`.
 
     """
-    interface_displacement_variable2: str
+    #=============================================
+    interface_displacement_variable2: str = "interface_displacement_2" #! TRZEBA ZAINICJOWAĆ WARTOŚĆ TEJ ZMIENNEJ. PRZY URUCHAMIANIU PROGRAMU displacement_variable2 JEST PUSTE. NA TEN MOMENT ZADEKLAROWANY JEST WYŁĄCZNIE TYP. Tu tak samo
+    #=============================================
     """Name of the primary variable representing the displacement on an interface.
     Normally defined in a mixin of instance
     :class:`~porepy.models.momentum_balance.SolutionStrategyMomentumBalance`.
@@ -113,17 +119,18 @@ class NewVariables(pp.momentum_balance.VariablesMomentumBalance):
         3. Contact traction variable on all fracture subdomains.
 
         """
+
         super().create_variables()
 
         self.equation_system.create_variables(
             dof_info={"cells": self.nd},
-            name=self.displacement2_variable,
+            name=self.displacement_variable2, #! Poprawiłem typo z displacement2_variable na displacement_variable2
             subdomains=self.mdg.subdomains(dim=self.nd),
             tags={"si_units": "m"},
         )
         self.equation_system.create_variables(
             dof_info={"cells": self.nd},
-            name=self.interface_displacement2_variable,
+            name=self.interface_displacement_variable2, #! Poprawiłem typo z interface_displacement2_variable na interface_displacement_variable2
             interfaces=self.mdg.interfaces(dim=self.nd - 1, codim=1),
             tags={"si_units": "m"},
         )
@@ -258,6 +265,13 @@ class MomentumBalanceGeometryBC(
 
 fluid_constants = pp.FluidComponent(viscosity=0.1, density=0.2)
 solid_constants = pp.SolidConstants(permeability=0.5, porosity=0.25)
+
+print("fluid_constants", fluid_constants)
+print("solid_constants", solid_constants)
+
+newVariablesObj = NewVariables()
+print("newVariablesObj", newVariablesObj.displacement_variable2)
+
 material_constants = {"fluid": fluid_constants, "solid": solid_constants}
 model_params = {"material_constants": material_constants, "linear_solver": "scipy_sparse"}
 
