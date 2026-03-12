@@ -62,7 +62,7 @@ class ViscoelasticSolidConstants(pp.SolidConstants):
         {
             "lame_lambda2": "Pa",
             "shear_modulus2": "Pa",
-            #"viscosity2": "Pa * s",
+            "viscosity": "Pa * s",
         }
     )
 
@@ -72,8 +72,11 @@ class ViscoelasticSolidConstants(pp.SolidConstants):
     shear_modulus2: float = 1.0
     """Shear modulus for the viscous part [Pa]."""
 
-    # viscosity2: float = 1.0
-    # """Viscosity for the viscous part [Pa s]."""
+    viscosity: float = 1.0
+    """Viscosity for the viscous part [Pa s]."""
+
+    # beta: float = 1.0
+    # """Beta = shear_modulus2/viscosity for the viscous part [Pa / (Pa s)]."""
 
 
 # =============================================================================
@@ -160,10 +163,10 @@ class ViscousElasticModuli:
     #     """Viscosity for the viscous part [Pa s]."""
     #     return Scalar(self.solid.viscosity2, "viscosity2")
 
-    # def beta(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
-    #     "beta = mi2 / eta -> shear moduli / viscosity for the viscous part [Pa/(Pa s)]."
-    #     val = self.solid.shear_modulus2 / self.solid.viscosity2
-    #     return Scalar(val, "beta")
+    def beta(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+        "beta = mi2 / eta -> shear moduli / viscosity for the viscous part [Pa/(Pa s)]."
+        val = self.solid.shear_modulus2 / self.solid.viscosity
+        return Scalar(val, "beta")
 
 
 # =============================================================================
@@ -450,7 +453,7 @@ class VariablesU2:
 class RateEquation:
     """Rate equations for the viscous displacement u2 and displacement u."""
 
-    beta: float = 1.0 #Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
+    beta:  float = 1.0 #Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator] 
     "beta = mi2 / eta -> shear moduli / viscosity for the viscous part. Provided by ViscousElasticModuli."
 
     displacement: Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
@@ -489,7 +492,9 @@ class RateEquation:
         u = self.displacement(subdomains)
         u2 = self.displacement2(subdomains)
 
-        equation = 1.0 @ u2 + pp.ad.dt(u2,dt_init) - pp.ad.dt(u,dt_init)
+        beta = Scalar(self.beta)
+
+        equation = beta * u2 + pp.ad.dt(u2,dt_init) - pp.ad.dt(u,dt_init)
 
         equation.set_name("rate_equation")
         
@@ -935,7 +940,7 @@ if __name__ == "__main__":
         # Parameters for the viscous part – adjust to your material.
         lame_lambda2=0.5,
         shear_modulus2=0.3,
-        #viscosity2=1.0,
+        viscosity=1.0,
     )
     material_constants = {"fluid": fluid_constants, "solid": solid_constants}
     model_params = {
