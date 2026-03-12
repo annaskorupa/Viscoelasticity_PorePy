@@ -48,11 +48,12 @@ Scalar = pp.ad.Scalar
 # This follows the same pattern as FractureDamageSolidConstants in PorePy.
 @dataclass(kw_only=True, eq=False)
 class ViscoelasticSolidConstants(pp.SolidConstants):
-    """Extended solid constants with additional Lamé parameters for the viscous part.
+    """Extended solid constants with additional Lamé parameters and viscosity for the viscous part.
 
     The viscous component of the viscoelastic model requires its own set of
     elastic moduli (lame_lambda2, shear_modulus2), which are independent of the
     elastic part (lame_lambda, shear_modulus) used in the base MomentumBalance.
+
     """
 
     # Deep copy the parent SI_units dict and add new entries.
@@ -61,6 +62,7 @@ class ViscoelasticSolidConstants(pp.SolidConstants):
         {
             "lame_lambda2": "Pa",
             "shear_modulus2": "Pa",
+            #"viscosity2": "Pa * s",
         }
     )
 
@@ -69,6 +71,9 @@ class ViscoelasticSolidConstants(pp.SolidConstants):
 
     shear_modulus2: float = 1.0
     """Shear modulus for the viscous part [Pa]."""
+
+    # viscosity2: float = 1.0
+    # """Viscosity for the viscous part [Pa s]."""
 
 
 # =============================================================================
@@ -150,6 +155,15 @@ class ViscousElasticModuli:
         lmbda2 = self.solid.lame_lambda2 * np.ones(subdomain.num_cells)
         mu2 = self.solid.shear_modulus2 * np.ones(subdomain.num_cells)
         return pp.FourthOrderTensor(mu2, lmbda2)
+    
+    # def viscosity2(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+    #     """Viscosity for the viscous part [Pa s]."""
+    #     return Scalar(self.solid.viscosity2, "viscosity2")
+
+    # def beta(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+    #     "beta = mi2 / eta -> shear moduli / viscosity for the viscous part [Pa/(Pa s)]."
+    #     val = self.solid.shear_modulus2 / self.solid.viscosity2
+    #     return Scalar(val, "beta")
 
 
 # =============================================================================
@@ -429,6 +443,58 @@ class VariablesU2:
             self.interface_displacement2_variable, interfaces
         )
 
+
+# =============================================================================
+# **. Rate Equations
+# =============================================================================
+class RateEquation:
+    """Rate equations for the viscous displacement u2 and displacement u."""
+
+    beta: float = 1.0 #Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
+    "beta = mi2 / eta -> shear moduli / viscosity for the viscous part. Provided by ViscousElasticModuli."
+
+    displacement: Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
+    """Name of the primary variable representing the displacement in subdomains. Provided by pp.MomentumBalance"""
+    
+    displacement2: Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
+    """Displacement u2 variable. Provided by VariablesU2."""
+
+    def set_equations(self) -> None:
+        """Rate equation for u2 and u ((beta + d/dt)u2 - du/dt= 0).
+
+        Registers:
+            - rate_equation on matrix subdomains
+        """
+        super().set_equations()
+
+        matrix_subdomains = self.mdg.subdomains(dim=self.nd)
+        
+        matrix_eq = self._rate_equation(matrix_subdomains)
+        self.equation_system.set_equation(
+            matrix_eq, matrix_subdomains, {"cells": self.nd}
+        )
+
+    def _rate_equation(
+        self, subdomains: list[pp.Grid],
+    ) -> pp.ad.Operator:
+        """Rate equation for u2 and u ((beta + d/dt)u2 - du/dt= 0).
+
+        Parameters:
+            subdomains: Matrix subdomains.
+
+        Returns:
+            Operator for the u and u2 according to rate equation.
+        """
+        
+        u = self.displacement(subdomains)
+        u2 = self.displacement2(subdomains)
+
+        equation = 1.0 @ u2 + pp.ad.dt(u2,dt_init) - pp.ad.dt(u,dt_init)
+
+        equation.set_name("rate_equation")
+        
+        return equation
+    
 
 # =============================================================================
 # 7. Equations for u2
@@ -773,6 +839,8 @@ class ViscoelasticMomentumBalance(
     BodyForceMixin,
     # --- u2 mixins: must come BEFORE pp.MomentumBalance ---
     # Equations must be first so set_equations() is reached before
+    # --- ? RateEquation before ConstitutiveLaws so that rate_equation_u2 is registered before stress2 is called ? ---
+    RateEquation,
     # MomentumBalanceEquations terminates the super() chain.
     EquationsU2,
     # Variables must be before VariablesMomentumBalance.
@@ -867,6 +935,7 @@ if __name__ == "__main__":
         # Parameters for the viscous part – adjust to your material.
         lame_lambda2=0.5,
         shear_modulus2=0.3,
+        #viscosity2=1.0,
     )
     material_constants = {"fluid": fluid_constants, "solid": solid_constants}
     model_params = {
