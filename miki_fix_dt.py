@@ -453,7 +453,7 @@ class VariablesU2:
 class RateEquation:
     """Rate equations for the viscous displacement u2 and displacement u."""
 
-    beta:  float = 1.0 #Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator] 
+    beta:  Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator] 
     "beta = mi2 / eta -> shear moduli / viscosity for the viscous part. Provided by ViscousElasticModuli."
 
     displacement: Callable[[pp.SubdomainsOrBoundaries], pp.ad.Operator]
@@ -491,11 +491,12 @@ class RateEquation:
         
         u = self.displacement(subdomains)
         u2 = self.displacement2(subdomains)
+        beta = self.beta(subdomains)
 
-        beta = Scalar(self.beta)
+        term_u2 = beta * u2 + pp.ad.dt(u2, self.time_manager.dt)
+        term_u = pp.ad.dt(u, self.time_manager.dt)
 
-        equation = beta * u2 + pp.ad.dt(u2,dt_init) - pp.ad.dt(u,dt_init)
-
+        equation = term_u2 - term_u
         equation.set_name("rate_equation")
         
         return equation
@@ -843,11 +844,7 @@ class ViscoelasticMomentumBalance(
     BoundaryConditionsMixin,
     BodyForceMixin,
     # --- u2 mixins: must come BEFORE pp.MomentumBalance ---
-    # Equations must be first so set_equations() is reached before
-    # --- ? RateEquation before ConstitutiveLaws so that rate_equation_u2 is registered before stress2 is called ? ---
     RateEquation,
-    # MomentumBalanceEquations terminates the super() chain.
-    EquationsU2,
     # Variables must be before VariablesMomentumBalance.
     VariablesU2,
     # Constitutive laws for u2 stress.
@@ -973,18 +970,18 @@ if __name__ == "__main__":
                     plot_schedule.pop(0)
                     minutes = int(self.time_manager.time / 60)
                     title = f"Tracer distribution after {minutes} minutes"
+                    plt.close('all')
                     pp.plot_grid(
                         model.mdg,
                         cell_value=model.displacement2_variable,
-                        rgb=[1, 1, 1],
                         figsize=(10, 8),
                         linewidth=0.3,
-                        title="Viscous displacement u2",
+                        title=title,
                         plot_2d=True,
+                        if_plot=False,
                     )
-
-                    plt.show()
                     plt.savefig(f"displacement_u2_{minutes}.png", dpi=300)
+                    plt.show()
 
     model = ViscoelasticMomentumBalanceShowCase(model_params)
     pp.run_time_dependent_model(model)
@@ -993,19 +990,20 @@ if __name__ == "__main__":
     # pp.run_time_dependent_model(model)
 
     # Visualization
+    plt.close('all')
     pp.plot_grid(
         model.mdg,
         cell_value=model.displacement2_variable,
-        rgb=[1, 1, 1],
         figsize=(10, 8),
         linewidth=0.3,
         title="Viscous displacement u2",
         plot_2d=True,
+        if_plot=False,
     )
 
     import matplotlib.pyplot as plt
 
-    plt.show()
     plt.savefig("displacement_u2.png", dpi=300)
+    plt.show()
 
     print("Done – viscoelastic MomentumBalance completed successfully.")
