@@ -141,19 +141,28 @@ class RateEquation:
 # 5. Infrastructure Mixins
 # =============================================================================
 class BoundaryConditionsMixin:
-    """Dirichlet on North/West, Neumann (5 MPa/adiabatic) on East/South."""
+    """Dirichlet on North/South uy=0, Dirichlet on East/West ux = uy = 0."""
     units: pp.Units
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         domain_sides = self.domain_boundary_sides(sd)
-        return pp.BoundaryConditionVectorial(sd, domain_sides.west + domain_sides.north, "dir")
-    def bc_values_stress(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        return pp.BoundaryConditionVectorial(sd, domain_sides.west + domain_sides.east + domain_sides.north + domain_sides.south, "dir")
+    def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
         values = np.ones((self.nd, bg.num_cells))
         domain_sides = self.domain_boundary_sides(bg)
-        stress_val = self.units.convert_units(5000000, "Pa")
-        stress_val_0 = self.units.convert_units(0, "Pa")
-        values[:, domain_sides.east] *= stress_val
-        values[:, domain_sides.south] *= stress_val_0
+        displacement_val = self.units.convert_units(0.0, "m")
+        values[:, domain_sides.east] *= displacement_val
+        values[:, domain_sides.west] *= displacement_val
+        values[1:, domain_sides.north] *= displacement_val
+        values[1:, domain_sides.south] *= displacement_val
         return values.ravel("F")
+    # def bc_values_stress(self, bg: pp.BoundaryGrid) -> np.ndarray:
+    #     values = np.ones((self.nd, bg.num_cells))
+    #     domain_sides = self.domain_boundary_sides(bg)
+    #     stress_val = self.units.convert_units(5000000, "Pa")
+    #     stress_val_0 = self.units.convert_units(0, "Pa")
+    #     values[:, domain_sides.east] *= stress_val
+    #     values[:, domain_sides.south] *= stress_val_0
+    #     return values.ravel("F")
 
 class InitialConditionsU2:
     """Zero initial conditions for u2."""
@@ -178,18 +187,21 @@ class SolutionStrategyU2:
                 pp.initialize_data(sd, data, self.stress2_keyword, {"bc": self.bc_type_mechanics(sd), "fourth_order_tensor": self.stiffness_tensor2(sd)})
 
 class BodyForceMixin:
-    """Body force in a central region."""
+    """Body force in a central region. -> for MMS gravity force will be naglected, only fx is calculated."""
     solid: ViscoelasticSolidConstants
     units: pp.Units
     def body_force(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
         vals = []
+        A_MMS = 0.0003
+        b_MMS = 1.0 * 10^(-7)
         for sd in subdomains:
             data = np.zeros((sd.num_cells, self.nd))
             if sd.dim == 2:
                 cc = sd.cell_centers
                 mask = (cc[0] > 0.3/self.units.m) & (cc[0] < 0.7/self.units.m) & (cc[1] > 0.3/self.units.m) & (cc[1] < 0.7/self.units.m)
-                force = self.solid.density * self.units.convert_units(-9.8, "m * s^-2")
-                data[mask, 1] = force * sd.cell_volumes[mask]
+                #force = self.solid.density * self.units.convert_units(-9.8, "m * s^-2")
+                #do poprawy!!! force = self.units.convert_units(A_MMS * (np.pi / 0.8)^2 * np.sin(np.pi * sd.cell_centers) * (22575700000 * (1 - np.exp(-b_MMS * ))), "N")
+                #data[mask, 1] = force * sd.cell_volumes[mask]
             vals.append(data)
         return pp.ad.DenseArray(np.concatenate(vals).ravel(), "body_force")
 
@@ -234,7 +246,7 @@ if __name__ == "__main__":
         # E_1 = 22575700000 Pa, E_2 = 11000000 Pa, Poisson_nu = 0.0 -> https://doi.org/10.1016/j.apm.2006.04.006
         shear_modulus=22575700000/2, shear_modulus2=11000000000/2, 
         lame_lambda=0.0, lame_lambda2=0.0, 
-        viscosity=22575700000/2*(45.454545*24*60*60)#11000000000/45.454545, # tau = 1 hour
+        viscosity=22575700000*(45.454545*24*60*60)# bo  eta  = 2*shear_modulus*fi from fig 7 and eq. (10), # tau = 1 hour
         #density=0.2, permeability=0.5, porosity=0.25
     )
     
