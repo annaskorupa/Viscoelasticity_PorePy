@@ -202,7 +202,7 @@ class BodyForceMixin:
                 cc = sd.cell_centers
                 mask = (cc[0] > 0.3/self.units.m) & (cc[0] < 0.7/self.units.m) & (cc[1] > 0.3/self.units.m) & (cc[1] < 0.7/self.units.m)
                 #force = self.solid.density * self.units.convert_units(-9.8, "m * s^-2")
-                force = self.units.convert_units(A_MMS * (np.pi / 0.8)**2 * np.sin(np.pi * sd.cell_centers) * (22575700000 * (1 - np.exp(-b_MMS * t)) + 11000000000 * (b_MMS/(b_MMS - beta)) * (np.exp(-beta * t) - np.exp(-b_MMS * t))), "N")
+                force = self.units.convert_units(A_MMS * (np.pi / 0.8)**2 * np.sin(np.pi * cc[0, mask]) * (22575700000 * (1 - np.exp(-b_MMS * t)) + 11000000000 * (b_MMS/(b_MMS - beta)) * (np.exp(-beta * t) - np.exp(-b_MMS * t))), "N")
                 data[mask, 0] = force * sd.cell_volumes[mask]
             vals.append(data)
         return pp.ad.DenseArray(np.concatenate(vals).ravel(), "body_force")
