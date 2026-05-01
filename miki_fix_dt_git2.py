@@ -193,15 +193,17 @@ class BodyForceMixin:
     def body_force(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
         vals = []
         A_MMS = 0.0003
-        b_MMS = 1.0 * 10^(-7)
+        b_MMS = 1.0 * 10**(-7)
+        t = self.time_manager.time
+        beta = self.solid.shear_modulus2 / self.solid.viscosity
         for sd in subdomains:
             data = np.zeros((sd.num_cells, self.nd))
             if sd.dim == 2:
                 cc = sd.cell_centers
                 mask = (cc[0] > 0.3/self.units.m) & (cc[0] < 0.7/self.units.m) & (cc[1] > 0.3/self.units.m) & (cc[1] < 0.7/self.units.m)
                 #force = self.solid.density * self.units.convert_units(-9.8, "m * s^-2")
-                #do poprawy!!! force = self.units.convert_units(A_MMS * (np.pi / 0.8)^2 * np.sin(np.pi * sd.cell_centers) * (22575700000 * (1 - np.exp(-b_MMS * ))), "N")
-                #data[mask, 1] = force * sd.cell_volumes[mask]
+                force = self.units.convert_units(A_MMS * (np.pi / 0.8)**2 * np.sin(np.pi * sd.cell_centers) * (22575700000 * (1 - np.exp(-b_MMS * t)) + 11000000000 * (b_MMS/(b_MMS - beta)) * (np.exp(-beta * t) - np.exp(-b_MMS * t))), "N")
+                data[mask, 0] = force * sd.cell_volumes[mask]
             vals.append(data)
         return pp.ad.DenseArray(np.concatenate(vals).ravel(), "body_force")
 
