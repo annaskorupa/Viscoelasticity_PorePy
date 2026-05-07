@@ -243,7 +243,7 @@ class BodyForceMixin:
                 data[:, 0] = force_x * sd.cell_volumes  # fx for all cells
                 data[:, 1] = force_y * sd.cell_volumes  # fy for all cells
             
-            vals.append(data.ravel("F")) # FIX #8: Must be F-order [x0,x1... y0,y1...]
+            vals.append(data.ravel()) #FIX2 "F" deleted # FIX #8: Must be F-order [x0,x1... y0,y1...]
         return np.concatenate(vals)
 
     def body_force(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
