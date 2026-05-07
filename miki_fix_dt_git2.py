@@ -201,17 +201,48 @@ class BodyForceMixin:
         beta = self.solid.shear_modulus2 / self.solid.viscosity
         E1 = 2.0 * self.solid.shear_modulus    # ν=0.0 → E = 2μ
         E2 = 2.0 * self.solid.shear_modulus2
+        k = E1 / 3.0 # Bulk modulus for ν=0.0 is K = E/3
         L = 0.8  # domain length [m]
+        Lx = L
+        Ly = L
         for sd in subdomains:
             data = np.zeros((sd.num_cells, self.nd))
             if sd.dim == 2:
                 cc = sd.cell_centers
                 # f(x,t) = A*(π/L)²*sin(πx/L)*[E₁*(1-e^{-bt}) + E₂*(b/(b-β))*(e^{-βt}-e^{-bt})]
-                force = A_MMS * (np.pi / L)**2 * np.sin(np.pi * cc[0] / L) * (
-                    E1 * (1.0 - np.exp(-b_MMS * t))
-                    + E2 * (b_MMS / (b_MMS - beta)) * (np.exp(-beta * t) - np.exp(-b_MMS * t))
+                #force = A_MMS * (np.pi / L)**2 * np.sin(np.pi * cc[0] / L) * (
+                #    E1 * (1.0 - np.exp(-b_MMS * t))
+                #    + E2 * (b_MMS / (b_MMS - beta)) * (np.exp(-beta * t) - np.exp(-b_MMS * t))
+                #)
+                #data[:, 0] = force * sd.cell_volumes  # fx for all cells
+
+                force_x = (np.pi**2 * (3.0 * Lx * b_MMS * shear_modulus2 * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
+                        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                        - 3.0 * Lx * shear_modulus * (1 - np.exp(b_MMS * t))*(b_MMS - beta) * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
+                        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 2 * Ly * b_MMS * shear_modulus2
+                        * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] /Lx)
+                        + Ay * Lx * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                        - Ly * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (3.0 * k *(Ax * Ly * np.sin(np.pi * cc[0] / Lx) - Ay * Lx * np.cos(np.pi * cc[0] / Lx))
+                        + 2.0 * shear_modulus * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] / Lx) + Ay * Lx * np.cos(np.pi * cc[0] / Lx))) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)))
+                        * np.exp(-2.0 * t * (2.0 * b_MMS + beta)) * np.cos(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
+                )       
+
+                force_y = (np.pi**2 * (-2.0 * Lx * b_MMS * shear_modulus2* (Ax * Ly * np.cos(np.pi * cc[0] / Lx) 
+                            - 2.0 * Ay * Lx * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t))
+                            * np.exp(t * (3.0 * b_MMS + beta)) - Lx * (1 - np.exp(b_MMS * t)) * (b_MMS - beta)
+                            * (3.0 * k * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) + Ay * Lx * np.sin(np.pi * cc[0] / Lx)) 
+                            - 2.0 * shear_modulus * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) - 2.0 * Ay * Lx *np.sin(np.pi * cc[0] / Lx)))
+                            * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 3.0 * Ly * b_MMS * shear_modulus2 * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
+                            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                            - 3.0 * Ly * shear_modulus * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
+                            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta))) 
+                            * np.exp(-2.0 * t * (2 * b_MMS + beta)) * np.sin(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
+
                 )
-                data[:, 0] = force * sd.cell_volumes  # fx for all cells
+                
+                data[:, 0] = force_x * sd.cell_volumes  # fx for all cells
+                data[:, 1] = force_y * sd.cell_volumes  # fy for all cells
+            
             vals.append(data.ravel("F")) # FIX #8: Must be F-order [x0,x1... y0,y1...]
         return np.concatenate(vals)
 
@@ -290,7 +321,7 @@ if __name__ == "__main__":
         lame_lambda2=0.0,
         # FIX #4: η = μ₂ × τ (standard Maxwell: β = μ₂/η = 1.0/τ)
         # τ_relax = 45.454545 days = 3,927,273.0 s
-        viscosity=(11000000000.0 / 2.0) * (45.454545 * 24.0 * 60.0 * 60.0),
+        viscosity= 22575700000.0 * (45.454545 * 24.0 * 60.0 * 60.0)  #(11000000000.0 / 2.0) * (45.454545 * 24.0 * 60.0 * 60.0),
     )
     
     model_params = {
@@ -326,13 +357,17 @@ if __name__ == "__main__":
 
                 A_MMS, b_MMS = 0.0003, 1e-7
                 t_now = self.time_manager.time
-                ux_mms = A_MMS * np.sin(np.pi * 0.4 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                #ux_mms = A_MMS * np.sin(np.pi * 0.4 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                ux_mms = A_MMS * np.sin(np.pi * 0.3950 / 0.8) * np.cos(np.pi * 0.3950 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                uy_mms = A_MMS * np.sin(np.pi * 0.3950 / 0.8) * np.sin(np.pi * 0.3950 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                
                 if self.time_manager.time_index % 100 == 0:
                     print(f"\n{'='*60}")
                     print(f"  t = {current_days:.2f} days | center ({sd.cell_centers[0,center_cell]:.4f}, {sd.cell_centers[1,center_cell]:.4f})")
                     print(f"  ux_num  = {ux_num:.6e} m")
                     print(f"  ux_MMS  = {ux_mms:.6e} m")
                     print(f"  uy_num  = {uy_num:.6e} m  (should be ~0)")
+                    print(f"  uy_MMS  = {uy_mms:.6e} m")
                     print(f"  error   = {abs(ux_num - ux_mms):.6e} m")
                     print("============================================================\n")
             
