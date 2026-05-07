@@ -3,7 +3,7 @@ import sympy as sp
 # 1. Definicja zmiennych
 x, y, t = sp.symbols('x y t')
 Ax, Ay, b, beta = sp.symbols('Ax Ay b beta')
-Lx, Ly, mu1, mu2, k = sp.symbols('Lx Ly mu1 mu2 k')
+Lx, Ly, shear_modulus, shear_modulus2, k = sp.symbols('Lx Ly shear_modulus shear_modulus2 k')
 
 # 2. Definicja funkcji czasu
 T1 = 1 - sp.exp(-b*t)
@@ -26,9 +26,9 @@ dev_eps_yy_s = eps_yy_s - tr_eps_s / 3
 dev_eps_xy_s = eps_xy_s 
 
 # 6. Naprężenia całkowite z modelu lepkosprężystego
-sig_xx = 2*mu1 * dev_eps_xx_s * T1 + 2*mu2 * dev_eps_xx_s * T2 + k * tr_eps_s * T1
-sig_yy = 2*mu1 * dev_eps_yy_s * T1 + 2*mu2 * dev_eps_yy_s * T2 + k * tr_eps_s * T1
-sig_xy = 2*mu1 * dev_eps_xy_s * T1 + 2*mu2 * dev_eps_xy_s * T2 # brak tr_eps w ścinaniu
+sig_xx = 2*shear_modulus * dev_eps_xx_s * T1 + 2*shear_modulus2 * dev_eps_xx_s * T2 + k * tr_eps_s * T1
+sig_yy = 2*shear_modulus * dev_eps_yy_s * T1 + 2*shear_modulus2 * dev_eps_yy_s * T2 + k * tr_eps_s * T1
+sig_xy = 2*shear_modulus * dev_eps_xy_s * T1 + 2*shear_modulus2 * dev_eps_xy_s * T2 # brak tr_eps w ścinaniu
 
 # 7. Siły wymuszające MMS (f = - div(sigma))
 fx = -(sp.diff(sig_xx, x) + sp.diff(sig_xy, y))
