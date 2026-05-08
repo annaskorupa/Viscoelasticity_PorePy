@@ -146,16 +146,34 @@ class BoundaryConditionsMixin:
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         domain_sides = self.domain_boundary_sides(sd)
         # FIX #1/#2: East/West → full Dirichlet (ux=0, uy=0)
-        bc = pp.BoundaryConditionVectorial(sd, domain_sides.west + domain_sides.east, "dir")
+        bc = pp.BoundaryConditionVectorial(sd, domain_sides.west + domain_sides.east + domain_sides.north + domain_sides.south, "dir")
         # North/South → Dirichlet ONLY for uy (component [1]), ux stays Neumann (free)
-        bc.is_dir[1, domain_sides.north] = True
-        bc.is_neu[1, domain_sides.north] = False
-        bc.is_dir[1, domain_sides.south] = True
-        bc.is_neu[1, domain_sides.south] = False
+        #bc.is_dir[1, domain_sides.north] = True
+        #bc.is_neu[1, domain_sides.north] = False
+        #bc.is_dir[1, domain_sides.south] = True
+        #bc.is_neu[1, domain_sides.south] = False
         return bc
-    def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
+    #def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
         # FIX #1: np.zeros instead of np.ones — all Dirichlet values = 0
-        return np.zeros((self.nd, bg.num_cells)).ravel("F")
+        #return np.zeros((self.nd, bg.num_cells)).ravel("F")
+    def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        cc = bg.cell_centers
+        A_MMS = 0.0003
+        Ax = A_MMS
+        Ay = A_MMS
+        b_MMS = 1.0e-7
+        t = self.time_manager.time
+        L = 0.8  # domain length [m]
+        Lx = L
+        Ly = L
+
+        ux = Ax * np.sin(np.pi * cc[0] / Lx) * np.cos(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
+        uy = Ay * np.sin(np.pi * cc[0] / Lx) * np.sin(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
+
+        data = np.zeros((self.nd, bg.num_cells))
+        data[0, :] = ux
+        data[1, :] = uy
+        return data.ravel()
     def bc_values_stress(self, bg: pp.BoundaryGrid) -> np.ndarray:
         # FIX #6: Explicit zero traction on Neumann faces (ux on N/S)
         return np.zeros((self.nd, bg.num_cells)).ravel("F")
@@ -202,13 +220,57 @@ class BodyForceMixin:
         E1 = 2.0 * self.solid.shear_modulus    # ν=0.0 → E = 2μ
         E2 = 2.0 * self.solid.shear_modulus2
         k = E1 / 3.0 # Bulk modulus for ν=0.0 is K = E/3
+        k2 = E2 / 3.0
         L = 0.8  # domain length [m]
         Lx = L
         Ly = L
+        kx = np.pi / Lx
+        ky = np.pi / Ly
         for sd in subdomains:
             data = np.zeros((sd.num_cells, self.nd))
             if sd.dim == 2:
                 cc = sd.cell_centers
+                sx = np.sin(kx * x)
+                cx = np.cos(kx * x)
+                sy = np.sin(ky * y)
+                cy = np.cos(ky * y)
+
+                sx = np.sin(kx * x)
+                cx = np.cos(kx * x)
+                sy = np.sin(ky * y)
+                cy = np.cos(ky * y)
+
+                T1 = 1.0 - np.exp(-b_MMS * t)
+                T2 = (b_MMS / (beta - b_MMS)) * (np.exp(-b_MMS * t) - np.exp(-beta * t))
+
+                term_x_E = (
+                    # Grupa sin(kx)*cos(ky)
+                    ( (k + 4.0/3.0*shear_modulus)*kx**2*Ax + shear_modulus*ky**2*Ax ) * sx * cy 
+                    # Grupa cos(kx)*cos(ky) - to jest ta brakująca część!
+                    - ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ay ) * cx * cy
+                )
+
+                term_x_E_vis = (
+                                ( (k2 + 4.0/3.0*shear_modulus2)*kx**2*Ax + shear_modulus2*ky**2*Ax ) * sx * cy
+                                - ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ay ) * cx * cy
+                )
+
+                term_y_E = (
+                            #    Grupa sin(kx)*sin(ky) - GŁÓWNY NAPĘD UY
+                            ( (k + 4.0/3.0*shear_modulus)*ky**2*Ay + shear_modulus*kx**2*Ay ) * sx * sy
+                            # Grupa cos(kx)*sin(ky)
+                            + ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ax ) * cx * sy
+                )
+
+                term_y_E_vis = (
+                                ( (k2 + 4.0/3.0*shear_modulus2)*ky**2*Ay + shear_modulus2*kx**2*Ay ) * sx * sy
+                                + ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ax ) * cx * sy
+                )
+
+                force_x = term_x_E * T1 + term_x_E_vis * T2
+                force_y = term_y_E * T1 + term_y_E_vis * T2
+
+                
                 # f(x,t) = A*(π/L)²*sin(πx/L)*[E₁*(1-e^{-bt}) + E₂*(b/(b-β))*(e^{-βt}-e^{-bt})]
                 #force = A_MMS * (np.pi / L)**2 * np.sin(np.pi * cc[0] / L) * (
                 #    E1 * (1.0 - np.exp(-b_MMS * t))
@@ -216,29 +278,31 @@ class BodyForceMixin:
                 #)
                 #data[:, 0] = force * sd.cell_volumes  # fx for all cells
 
-                force_x = (np.pi**2 * (3.0 * Lx * b_MMS * shear_modulus2 * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
-                        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
-                        - 3.0 * Lx * shear_modulus * (1 - np.exp(b_MMS * t))*(b_MMS - beta) * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
-                        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 2 * Ly * b_MMS * shear_modulus2
-                        * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] /Lx)
-                        + Ay * Lx * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
-                        - Ly * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (3.0 * k *(Ax * Ly * np.sin(np.pi * cc[0] / Lx) - Ay * Lx * np.cos(np.pi * cc[0] / Lx))
-                        + 2.0 * shear_modulus * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] / Lx) + Ay * Lx * np.cos(np.pi * cc[0] / Lx))) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)))
-                        * np.exp(-2.0 * t * (2.0 * b_MMS + beta)) * np.cos(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
-                )       
+                #force_x = (np.pi**2 * (3.0 * Lx * b_MMS * shear_modulus2 * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
+                #        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                #        - 3.0 * Lx * shear_modulus * (1 - np.exp(b_MMS * t))*(b_MMS - beta) * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
+                #        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 2 * Ly * b_MMS * shear_modulus2
+                #        * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] /Lx)
+                #        + Ay * Lx * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                #        - Ly * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (3.0 * k *(Ax * Ly * np.sin(np.pi * cc[0] / Lx) - Ay * Lx * np.cos(np.pi * cc[0] / Lx))
+                #        + 2.0 * shear_modulus * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] / Lx) + Ay * Lx * np.cos(np.pi * cc[0] / Lx))) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)))
+                #        * np.exp(-2.0 * t * (2.0 * b_MMS + beta)) * np.cos(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
+                #)       
 
-                force_y = (np.pi**2 * (-2.0 * Lx * b_MMS * shear_modulus2* (Ax * Ly * np.cos(np.pi * cc[0] / Lx) 
-                            - 2.0 * Ay * Lx * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t))
-                            * np.exp(t * (3.0 * b_MMS + beta)) - Lx * (1 - np.exp(b_MMS * t)) * (b_MMS - beta)
-                            * (3.0 * k * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) + Ay * Lx * np.sin(np.pi * cc[0] / Lx)) 
-                            - 2.0 * shear_modulus * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) - 2.0 * Ay * Lx *np.sin(np.pi * cc[0] / Lx)))
-                            * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 3.0 * Ly * b_MMS * shear_modulus2 * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
-                            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
-                            - 3.0 * Ly * shear_modulus * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
-                            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta))) 
-                            * np.exp(-2.0 * t * (2 * b_MMS + beta)) * np.sin(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
+                #force_y = (np.pi**2 * (-2.0 * Lx * b_MMS * shear_modulus2* (Ax * Ly * np.cos(np.pi * cc[0] / Lx) 
+                #            - 2.0 * Ay * Lx * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t))
+                #            * np.exp(t * (3.0 * b_MMS + beta)) - Lx * (1 - np.exp(b_MMS * t)) * (b_MMS - beta)
+                #            * (3.0 * k * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) + Ay * Lx * np.sin(np.pi * cc[0] / Lx)) 
+                #            - 2.0 * shear_modulus * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) - 2.0 * Ay * Lx *np.sin(np.pi * cc[0] / Lx)))
+                #            * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 3.0 * Ly * b_MMS * shear_modulus2 * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
+                #            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                #            - 3.0 * Ly * shear_modulus * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
+                #            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta))) 
+                #            * np.exp(-2.0 * t * (2 * b_MMS + beta)) * np.sin(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
 
-                )
+                #)
+
+
                 
                 data[:, 0] = force_x * sd.cell_volumes  # fx for all cells
                 data[:, 1] = force_y * sd.cell_volumes  # fy for all cells
@@ -368,7 +432,8 @@ if __name__ == "__main__":
                     print(f"  ux_MMS  = {ux_mms:.6e} m")
                     print(f"  uy_num  = {uy_num:.6e} m  (should be ~0)")
                     print(f"  uy_MMS  = {uy_mms:.6e} m")
-                    print(f"  error   = {abs(ux_num - ux_mms):.6e} m")
+                    print(f"  error x  = {abs(ux_num - ux_mms)/abs(ux_mms):.6e} m")
+                    print(f"  error y  = {abs(uy_num - uy_mms)/abs(uy_mms):.6e} m")
                     print("============================================================\n")
             
             sched = self.params.get('plot_schedule', [])
