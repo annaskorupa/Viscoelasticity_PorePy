@@ -161,13 +161,13 @@ class BoundaryConditionsMixin:
         A_MMS = 0.0003
         Ax = A_MMS
         Ay = A_MMS
-        b_MMS = 1.0e-7
+        b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
         t = self.time_manager.time
         L = 0.8  # domain length [m]
         Lx = L
         Ly = L
 
-        ux = Ax * np.sin(np.pi * cc[0] / Lx) * np.cos(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
+        ux = Ax * np.sin(np.pi * cc[0] / Lx) * np.sin(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
         uy = Ay * np.sin(np.pi * cc[0] / Lx) * np.sin(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
 
         data = np.zeros((self.nd, bg.num_cells))
@@ -214,7 +214,7 @@ class BodyForceMixin:
         """Compute MMS body force values at the current time step."""
         vals = []
         A_MMS = 0.0003
-        b_MMS = 1.0e-7
+        b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
         t = self.time_manager.time
         beta = self.solid.shear_modulus2 / self.solid.viscosity
         E1 = 2.0 * self.solid.shear_modulus    # ν=0.0 → E = 2μ
@@ -245,13 +245,13 @@ class BodyForceMixin:
 
                 term_x_E = (
                     # Grupa sin(kx)*cos(ky)
-                    ( (k + 4.0/3.0*shear_modulus)*kx**2*Ax + shear_modulus*ky**2*Ax ) * sx * cy 
+                    ( (k + 4.0/3.0*shear_modulus)*kx**2*Ax + shear_modulus*ky**2*Ax ) * sx * sy 
                     # Grupa cos(kx)*cos(ky) - to jest ta brakująca część!
                     - ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ay ) * cx * cy
                 )
 
                 term_x_E_vis = (
-                                ( (k2 + 4.0/3.0*shear_modulus2)*kx**2*Ax + shear_modulus2*ky**2*Ax ) * sx * cy
+                                ( (k2 + 4.0/3.0*shear_modulus2)*kx**2*Ax + shear_modulus2*ky**2*Ax ) * sx * sy
                                 - ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ay ) * cx * cy
                 )
 
@@ -259,12 +259,12 @@ class BodyForceMixin:
                             #    Grupa sin(kx)*sin(ky) - GŁÓWNY NAPĘD UY
                             ( (k + 4.0/3.0*shear_modulus)*ky**2*Ay + shear_modulus*kx**2*Ay ) * sx * sy
                             # Grupa cos(kx)*sin(ky)
-                            + ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ax ) * cx * sy
+                            - ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ax ) * cx * cy
                 )
 
                 term_y_E_vis = (
                                 ( (k2 + 4.0/3.0*shear_modulus2)*ky**2*Ay + shear_modulus2*kx**2*Ay ) * sx * sy
-                                + ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ax ) * cx * sy
+                                - ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ax ) * cx * cy
                 )
 
                 force_x = term_x_E * T1 + term_x_E_vis * T2
@@ -371,10 +371,12 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
 # 7. Run Script
 # =============================================================================
 if __name__ == "__main__":
+    dt = 10.0 * pp.SECOND
+    final_time = 1.0 * pp.MINUTE
     time_manager = pp.TimeManager(
-        schedule=[0.0, 450.0 * pp.DAY],
-        dt_init=10.0 * pp.MINUTE,
-        dt_min_max=(1.0 * pp.MINUTE, 1.0 * pp.DAY),
+        schedule=[0.0, 1.0 * pp.MINUTE],
+        dt_init=dt,
+        dt_min_max=(1.0 * pp.MINUTE, 1.0 * pp.MINUTE),
     )
     
     solid_constants = ViscoelasticSolidConstants(
@@ -419,11 +421,30 @@ if __name__ == "__main__":
                 ux_num = u_reshaped[0, center_cell]
                 uy_num = u_reshaped[1, center_cell]
 
-                A_MMS, b_MMS = 0.0003, 1e-7
+                A_MMS, b_MMS = 0.0003, 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
                 t_now = self.time_manager.time
                 #ux_mms = A_MMS * np.sin(np.pi * 0.4 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
-                ux_mms = A_MMS * np.sin(np.pi * 0.3950 / 0.8) * np.cos(np.pi * 0.3950 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
-                uy_mms = A_MMS * np.sin(np.pi * 0.3950 / 0.8) * np.sin(np.pi * 0.3950 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                cc = sd.cell_centers
+                ux_mms = A_MMS * np.sin(np.pi * cc[0] / 0.8) * np.sin(np.pi * cc[1] / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                uy_mms = A_MMS * np.sin(np.pi * cc[0] / 0.8) * np.sin(np.pi * cc[1] / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+
+                #Convergence calculation
+                error_x = ux_num - ux_mms
+                error_y = uy_num - uy_mms
+
+                print(f"CZAS SYMULACJI: {self.time_manager.time}")
+                print(f"MAX ux_num: {np.max(np.abs(ux_num))}")
+                print(f"MAX ux_mms: {np.max(np.abs(ux_mms))}")
+                print(f"DEBUG: diff_x_max = {np.max(np.abs(ux_num - ux_mms))}")
+                print(f"DEBUG: diff_y_max = {np.max(np.abs(uy_num - uy_mms))}")
+
+                L2_x = np.sqrt(np.sum(error_x**2 * sd.cell_volumes))
+                L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes))
+
+                L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes))
+
+                ux_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                uy_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
                 
                 if self.time_manager.time_index % 100 == 0:
                     print(f"\n{'='*60}")
@@ -434,6 +455,9 @@ if __name__ == "__main__":
                     print(f"  uy_MMS  = {uy_mms:.6e} m")
                     print(f"  error x  = {abs(ux_num - ux_mms)/abs(ux_mms):.6e} m")
                     print(f"  error y  = {abs(uy_num - uy_mms)/abs(uy_mms):.6e} m")
+                    print(f"  L2 error x = {L2_x:.6e} m")
+                    print(f"  L2 error y = {L2_y:.6e} m")
+                    print(f"  L2 total error = {L2_total:.6e} m")
                     print("============================================================\n")
             
             sched = self.params.get('plot_schedule', [])
