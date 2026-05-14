@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viscoelastic-porepy"
+version = "0.1.0"
+description = "Viscoelastic extension of PorePy's MomentumBalance model (Generalized Maxwell)"
+requires-python = ">=3.10"
+dependencies = [
+    "porepy",
+    "numpy",
+    "matplotlib",
+    "sympy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

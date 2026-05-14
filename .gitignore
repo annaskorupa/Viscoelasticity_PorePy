@@ -1,2 +1,37 @@
-visualization/*
-__pycache__/*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Simulation output
+_output/
+_archive/
+visualization/
+
+# Generated files
+*.png
+*.msh
+*.geo_unrolled
+*.pvd
+*.vtu
+
+# OS
+.DS_Store
+Thumbs.db
