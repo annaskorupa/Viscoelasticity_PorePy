@@ -45,7 +45,7 @@ class GeometryMixin:
     def grid_type(self) -> str:
         return self.params.get("grid_type", "cartesian")
     def meshing_arguments(self) -> dict:
-        return {"cell_size": self.params.get("cell_size", 0.01)}
+        return {"cell_size": self.params.get("cell_size", 0.125)} #other:0.1 0.05, 0.025, 0.0125
 
 # =============================================================================
 # 3. Constitutive Laws for u2
@@ -158,7 +158,7 @@ class BoundaryConditionsMixin:
         #return np.zeros((self.nd, bg.num_cells)).ravel("F")
     def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
         cc = bg.cell_centers
-        A_MMS = 0.0003
+        A_MMS = 1.0e-3
         Ax = A_MMS
         Ay = A_MMS
         b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
@@ -213,7 +213,7 @@ class BodyForceMixin:
     def _compute_body_force_values(self, subdomains: list[pp.Grid]) -> np.ndarray:
         """Compute MMS body force values at the current time step."""
         vals = []
-        A_MMS = 0.0003
+        A_MMS = 1.0e-3
         b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
         t = self.time_manager.time
         beta = self.solid.shear_modulus2 / self.solid.viscosity
@@ -221,6 +221,10 @@ class BodyForceMixin:
         E2 = 2.0 * self.solid.shear_modulus2
         k = E1 / 3.0 # Bulk modulus for ν=0.0 is K = E/3
         k2 = E2 / 3.0
+        shear_modulus = self.solid.shear_modulus
+        shear_modulus2 = self.solid.shear_modulus2
+        lame_lambda = self.solid.lame_lambda
+        lame_lambda2 = self.solid.lame_lambda2
         L = 0.8  # domain length [m]
         Lx = L
         Ly = L
@@ -245,9 +249,9 @@ class BodyForceMixin:
 
                 term_x_E = (
                     # Grupa sin(kx)*cos(ky)
-                    ( (k + 4.0/3.0*shear_modulus)*kx**2*Ax + shear_modulus*ky**2*Ax ) * sx * sy 
+                    ( (lame_lambda + 2*shear_modulus)*kx**2*Ax + shear_modulus*ky**2*Ax ) * sx * sy 
                     # Grupa cos(kx)*cos(ky) - to jest ta brakująca część!
-                    - ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ay ) * cx * cy
+                    - ( (lame_lambda + shear_modulus)*kx*ky*Ay ) * cx * cy
                 )
 
                 term_x_E_vis = (
@@ -257,14 +261,14 @@ class BodyForceMixin:
 
                 term_y_E = (
                             #    Grupa sin(kx)*sin(ky) - GŁÓWNY NAPĘD UY
-                            ( (k + 4.0/3.0*shear_modulus)*ky**2*Ay + shear_modulus*kx**2*Ay ) * sx * sy
+                            ( (lame_lambda + 2*shear_modulus)*ky**2*Ay + shear_modulus*kx**2*Ay ) * sx * sy
                             # Grupa cos(kx)*sin(ky)
-                            - ( (k + 1.0/3.0*shear_modulus)*kx*ky*Ax ) * cx * cy
+                            - ( (lame_lambda + shear_modulus)*kx*ky*Ax ) * cx * cy
                 )
 
                 term_y_E_vis = (
-                                ( (k2 + 4.0/3.0*shear_modulus2)*ky**2*Ay + shear_modulus2*kx**2*Ay ) * sx * sy
-                                - ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ax ) * cx * cy
+                                ( (lame_lambda2 + 2*shear_modulus2)*ky**2*Ay + shear_modulus2*kx**2*Ay ) * sx * sy
+                                - ( (lame_lambda2 + shear_modulus2)*kx*ky*Ax ) * cx * cy
                 )
 
                 force_x = term_x_E * T1 + term_x_E_vis * T2
@@ -371,12 +375,12 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
 # 7. Run Script
 # =============================================================================
 if __name__ == "__main__":
-    dt = 10.0 * pp.SECOND
-    final_time = 1.0 * pp.MINUTE
+    dt = 1.0 * pp.SECOND #other 2, 4, 8
+    final_time = 100.0 * pp.SECOND
     time_manager = pp.TimeManager(
-        schedule=[0.0, 1.0 * pp.MINUTE],
+        schedule=[0.0, final_time],
         dt_init=dt,
-        dt_min_max=(1.0 * pp.MINUTE, 1.0 * pp.MINUTE),
+        dt_min_max=(0.0 * pp.MINUTE, final_time),
     )
     
     solid_constants = ViscoelasticSolidConstants(
@@ -418,10 +422,10 @@ if __name__ == "__main__":
                 
                 # Reshape to (2, N) where row 0 is ux, row 1 is uy
                 u_reshaped = u_vec.reshape(self.nd, -1, order='F')
-                ux_num = u_reshaped[0, center_cell]
-                uy_num = u_reshaped[1, center_cell]
+                ux_num = u_reshaped[0, :] #[0, center_cell]
+                uy_num = u_reshaped[1, :] #[1, center_cell]
 
-                A_MMS, b_MMS = 0.0003, 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
+                A_MMS, b_MMS = 1.0e-3, 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
                 t_now = self.time_manager.time
                 #ux_mms = A_MMS * np.sin(np.pi * 0.4 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
                 cc = sd.cell_centers
@@ -438,10 +442,13 @@ if __name__ == "__main__":
                 print(f"DEBUG: diff_x_max = {np.max(np.abs(ux_num - ux_mms))}")
                 print(f"DEBUG: diff_y_max = {np.max(np.abs(uy_num - uy_mms))}")
 
-                L2_x = np.sqrt(np.sum(error_x**2 * sd.cell_volumes))
-                L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes))
+                abs_L2_x = np.sqrt(np.sum(error_x**2 * sd.cell_volumes))
+                abs_L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes))
+                rel_L2_x = np.sqrt(np.sum(error_x**2 * sd.cell_volumes)) / np.sqrt(np.sum(ux_mms**2 * sd.cell_volumes))
+                rel_L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes)) / np.sqrt(np.sum(uy_mms**2 * sd.cell_volumes))
 
-                L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes))
+                abs_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes))
+                rel_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes)) / np.sqrt(np.sum((ux_mms**2 + uy_mms**2) * sd.cell_volumes)
 
                 ux_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
                 uy_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
@@ -449,15 +456,18 @@ if __name__ == "__main__":
                 if self.time_manager.time_index % 100 == 0:
                     print(f"\n{'='*60}")
                     print(f"  t = {current_days:.2f} days | center ({sd.cell_centers[0,center_cell]:.4f}, {sd.cell_centers[1,center_cell]:.4f})")
-                    print(f"  ux_num  = {ux_num:.6e} m")
-                    print(f"  ux_MMS  = {ux_mms:.6e} m")
-                    print(f"  uy_num  = {uy_num:.6e} m  (should be ~0)")
-                    print(f"  uy_MMS  = {uy_mms:.6e} m")
-                    print(f"  error x  = {abs(ux_num - ux_mms)/abs(ux_mms):.6e} m")
-                    print(f"  error y  = {abs(uy_num - uy_mms)/abs(uy_mms):.6e} m")
-                    print(f"  L2 error x = {L2_x:.6e} m")
-                    print(f"  L2 error y = {L2_y:.6e} m")
-                    print(f"  L2 total error = {L2_total:.6e} m")
+                    # print(f"  ux_num  = {ux_num:.6e} m")
+                    # print(f"  ux_MMS  = {ux_mms_p:.6e} m")
+                    # print(f"  uy_num  = {uy_num:.6e} m")
+                    # print(f"  uy_MMS  = {uy_mms_p:.6e} m")
+                    # print(f"  error x   = {abs(ux_num - ux_mms_p)/abs(ux_mms_p)*100:.6e} %")
+                    # print(f"  error y   = {abs(uy_num - uy_mms_p)/abs(uy_mms_p)*100:.6e} %")
+                    print(f"  ABsolute L2 error x = {abs_L2_x:.6e} m")
+                    print(f"  ABsolute L2 error y = {abs_L2_y:.6e} m")
+                    print(f"  ABsolute L2 total error = {abs_L2_total:.6e} m")
+                    print(f"  Relative L2 error x = {rel_L2_x:.6e}")
+                    print(f"  Relative L2 error y = {rel_L2_y:.6e}")
+                    print(f"  Relative L2 total error = {rel_L2_total:.6e}")
                     print("============================================================\n")
             
             sched = self.params.get('plot_schedule', [])
