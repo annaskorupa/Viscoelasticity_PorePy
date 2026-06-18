@@ -29,14 +29,10 @@ class ViscoelasticSolidConstants(pp.SolidConstants):
         "lame_lambda2": "Pa",
         "shear_modulus2": "Pa",
         "viscosity": "Pa * s",
-        "alpha": "",
-        "omega": "",
     })
     lame_lambda2: float = 1.0
     shear_modulus2: float = 1.0
     viscosity: float = 1.0
-    alpha: float = 1.0
-    omega: float = 0.0
 
 # =============================================================================
 # 2. Geometry
@@ -136,51 +132,7 @@ class VariablesU2:
         return self.equation_system.md_variable(self.interface_displacement2_variable, interfaces)
 
 class RateEquation:
-    """Implementation of D^alpha u2 + beta*u2 - D^alpha u = 0."""
-    def compute_gl_weights(self, alpha, n):
-        w = np.zeros(n + 1)
-        w[0] = 1.0
-        for k in range(1, n + 1):
-            w[k] = w[k-1] * (1.0 - (alpha + 1.0) / k)
-        return w
-
-    def _update_gl_sums(self):
-        n = self.time_manager.time_index
-        w_alpha = self.compute_gl_weights(self.solid.alpha, n)
-        
-        if len(self.history_u) == 0:
-            # Initial conditions are zero
-            for sd in self.mdg.subdomains(dim=self.nd):
-                self.history_u.append(np.zeros(sd.num_cells * self.nd))
-                self.history_u2.append(np.zeros(sd.num_cells * self.nd))
-
-        if n == 0:
-            for sd in self.mdg.subdomains(dim=self.nd):
-                sd_data = self.mdg.subdomain_data(sd)
-                gl_u_zero = np.zeros(sd.num_cells * self.nd)
-                pp.set_solution_values("gl_u", gl_u_zero, sd_data, time_step_index=0)
-                pp.set_solution_values("gl_u2", gl_u_zero, sd_data, time_step_index=0)
-                pp.set_solution_values("gl_u", gl_u_zero, sd_data, iterate_index=0)
-                pp.set_solution_values("gl_u2", gl_u_zero, sd_data, iterate_index=0)
-            return
-
-        gl_u = np.zeros_like(self.history_u[0])
-        gl_u2 = np.zeros_like(self.history_u2[0])
-        
-        for k in range(1, n + 1):
-            gl_u += w_alpha[k] * self.history_u[n - k]
-            gl_u2 += w_alpha[k] * self.history_u2[n - k]
-            
-        offset = 0
-        for sd in self.mdg.subdomains(dim=self.nd):
-            sd_data = self.mdg.subdomain_data(sd)
-            num_dofs = sd.num_cells * self.nd
-            pp.set_solution_values("gl_u", gl_u[offset:offset+num_dofs], sd_data, time_step_index=0)
-            pp.set_solution_values("gl_u2", gl_u2[offset:offset+num_dofs], sd_data, time_step_index=0)
-            pp.set_solution_values("gl_u", gl_u[offset:offset+num_dofs], sd_data, iterate_index=0)
-            pp.set_solution_values("gl_u2", gl_u2[offset:offset+num_dofs], sd_data, iterate_index=0)
-            offset += num_dofs
-
+    """Implementation of u2_dot + beta*u2 - u_dot = 0."""
     def set_equations(self) -> None:
         super().set_equations()
         matrix_subdomains = self.mdg.subdomains(dim=self.nd)
@@ -188,15 +140,8 @@ class RateEquation:
         u2 = self.displacement2(matrix_subdomains)
         beta = self.beta(matrix_subdomains)
         
-        # D^alpha u2 + beta*u2 - D^alpha u = 0
-        gl_u = pp.ad.TimeDependentDenseArray("gl_u", matrix_subdomains)
-        gl_u2 = pp.ad.TimeDependentDenseArray("gl_u2", matrix_subdomains)
-        dt_alpha = self.ad_time_step ** self.solid.alpha
-        
-        D_alpha_u2 = (u2 + gl_u2) / dt_alpha
-        D_alpha_u = (u + gl_u) / dt_alpha
-        
-        eq = D_alpha_u2 + beta * u2 - D_alpha_u
+        # d/dt(u2) + beta*u2 - d/dt(u) = 0
+        eq = pp.ad.dt(u2, self.ad_time_step) + beta * u2 - pp.ad.dt(u, self.ad_time_step)
         eq.set_name("rate_equation")
         self.equation_system.set_equation(eq, matrix_subdomains, {"cells": self.nd})
 
@@ -267,11 +212,7 @@ class BoundaryConditionsMixin:
             #values[0, domain_sides.south] = self.units.convert_units(0.0, "Pa") * bg.cell_volumes[domain_sides.south]
 
             # Assigning y-component values
-            time_hours = self.time_manager.time / 3600.0
-            damage_factor = np.exp(self.solid.omega * time_hours)
-            if damage_factor > 10.0: damage_factor = 10.0
-            val = -3000000.0 * damage_factor
-            values[1, domain_sides.north] = self.units.convert_units(val, "Pa") * bg.cell_volumes[domain_sides.north]
+            values[1, domain_sides.north] = self.units.convert_units(-3000000.0, "Pa") * bg.cell_volumes[domain_sides.north]
             #values[1, domain_sides.south] = self.units.convert_units(0.0, "Pa") * bg.cell_volumes[domain_sides.south]
             
             return values.ravel("F") #FIX "F" deleted
@@ -337,19 +278,9 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
     def __init__(self, params: dict | None = None):
         super().__init__(params)
         self.stress2_keyword = "mechanics2"
-        self.history_u = []
-        self.history_u2 = []
-
-    def after_nonlinear_convergence(self) -> None:
-        super().after_nonlinear_convergence()
-        u_val = np.array(self.equation_system.evaluate(self.displacement(self.mdg.subdomains(dim=self.nd)))).ravel()
-        u2_val = np.array(self.equation_system.evaluate(self.displacement2(self.mdg.subdomains(dim=self.nd)))).ravel()
-        self.history_u.append(u_val)
-        self.history_u2.append(u2_val)
 
     def before_nonlinear_loop(self) -> None:
-        """FIX #8: Update body force values and GL sums each time step."""
-        self._update_gl_sums()
+        """FIX #8: Update body force values in data dictionary each time step."""
         super().before_nonlinear_loop()
         if hasattr(self, '_bf_subdomains'):
             new_vals = self._compute_body_force_values(self._bf_subdomains)
