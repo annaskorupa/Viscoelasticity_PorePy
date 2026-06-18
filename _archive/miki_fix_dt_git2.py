@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Callable, ClassVar, Optional, Sequence, cast
 from porepy.applications.md_grids.domains import nd_cube_domain
 
-
 Scalar = pp.ad.Scalar
 
 # =============================================================================
@@ -41,19 +40,12 @@ class GeometryMixin:
     """2D square domain with simplex mesh."""
     units: pp.Units
     def set_domain(self) -> None:
-        size = self.units.convert_units(0.1, "m")
+        size = self.units.convert_units(0.8, "m")
         self._domain = nd_cube_domain(2, size)
-    def set_fractures(self) -> None:
-        """Setting a diagonal fracture"""
-        frac_1_points = self.units.convert_units(
-            np.array([[0.04, 0.06], [0.04, 0.06]]), "m"
-        )
-        frac_1 = pp.LineFracture(frac_1_points)
-        self._fractures = [frac_1]    
     def grid_type(self) -> str:
-        return self.params.get("grid_type", "simplex")
+        return self.params.get("grid_type", "cartesian")
     def meshing_arguments(self) -> dict:
-        return {"cell_size": self.params.get("cell_size", 0.005)}
+        return {"cell_size": self.params.get("cell_size", 0.125)} #other:0.1 0.05, 0.025, 0.0125
 
 # =============================================================================
 # 3. Constitutive Laws for u2
@@ -141,17 +133,9 @@ class RateEquation:
         beta = self.beta(matrix_subdomains)
         
         # d/dt(u2) + beta*u2 - d/dt(u) = 0
-        eq = pp.ad.dt(u2, self.ad_time_step) + beta * u2 - pp.ad.dt(u, self.ad_time_step)
+        eq = pp.ad.dt(u2, self.time_manager.dt) + beta * u2 - pp.ad.dt(u, self.time_manager.dt)
         eq.set_name("rate_equation")
         self.equation_system.set_equation(eq, matrix_subdomains, {"cells": self.nd})
-
-        # Equation for u2_interface: simply set it to zero (no viscous jump across fracture)
-        interfaces = self.mdg.interfaces(dim=self.nd - 1, codim=1)
-        if len(interfaces) > 0:
-            u2_intf = self.interface_displacement2(interfaces)
-            eq_intf = Scalar(1) * u2_intf  # wrap to make it a non-variable operator
-            eq_intf.set_name("u2_interface_zero")
-            self.equation_system.set_equation(eq_intf, interfaces, {"cells": self.nd})
 
 # =============================================================================
 # 5. Infrastructure Mixins
@@ -160,64 +144,39 @@ class BoundaryConditionsMixin:
     """MMS BCs: East/West ux=uy=0 (Dir), North/South uy=0 (Dir) + ux free (Neu)."""
     units: pp.Units
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
-        #domain_sides = self.domain_boundary_sides(sd)
+        domain_sides = self.domain_boundary_sides(sd)
         # FIX #1/#2: East/West → full Dirichlet (ux=0, uy=0)
-        #bc = pp.BoundaryConditionVectorial(sd, domain_sides.south, "dir")
-        #bc = pp.BoundaryConditionVectorial(sd, domain_sides.north + domain_sides.east + domain_sides.west, "neu")
+        bc = pp.BoundaryConditionVectorial(sd, domain_sides.west + domain_sides.east + domain_sides.north + domain_sides.south, "dir")
         # North/South → Dirichlet ONLY for uy (component [1]), ux stays Neumann (free)
-        # bc.is_dir[1, domain_sides.north] = True
-        # bc.is_neu[1, domain_sides.north] = False
-        # bc.is_dir[1, domain_sides.south] = True
-        # bc.is_neu[1, domain_sides.south] = False
-
-        bound_faces = sd.tags.get("boundary_faces", np.array([], dtype=int))
-
-        if sd.dim == self.nd:  # Główna domena 2D
-            domain_sides = self.domain_boundary_sides(sd)
-            all_external_faces = domain_sides.north + domain_sides.south + domain_sides.east + domain_sides.west
-            bc = pp.BoundaryConditionVectorial(sd, all_external_faces, "neu")
-            bc.is_dir[:, domain_sides.south] = True
-            bc.is_neu[:, domain_sides.south] = False
-            return bc
-   
-        else:
-        # Pobieramy krawędzie brzegowe poddomeny (jeśli istnieją), w przeciwnym wypadku pustą tablicę
-            bound_faces = sd.tags.get("boundary_faces", np.array([], dtype=int))
-            return pp.BoundaryConditionVectorial(sd, bound_faces, "neu")
-    
-    def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        #bc.is_dir[1, domain_sides.north] = True
+        #bc.is_neu[1, domain_sides.north] = False
+        #bc.is_dir[1, domain_sides.south] = True
+        #bc.is_neu[1, domain_sides.south] = False
+        return bc
+    #def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
         # FIX #1: np.zeros instead of np.ones — all Dirichlet values = 0
-        if bg.parent.dim == self.nd:
+        #return np.zeros((self.nd, bg.num_cells)).ravel("F")
+    def bc_values_displacement(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        cc = bg.cell_centers
+        A_MMS = 1.0e-3
+        Ax = A_MMS
+        Ay = A_MMS
+        b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
+        t = self.time_manager.time
+        L = 0.8  # domain length [m]
+        Lx = L
+        Ly = L
 
-            values = np.zeros((self.nd, bg.num_cells))
-            domain_sides = self.domain_boundary_sides(bg)
+        ux = Ax * np.sin(np.pi * cc[0] / Lx) * np.sin(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
+        uy = Ay * np.sin(np.pi * cc[0] / Lx) * np.sin(np.pi * cc[1] / Ly) * (1.0 - np.exp(-b_MMS * t))
 
-            values[0, domain_sides.south] = 0.0
-            values[1, domain_sides.south] = 0.0
-
-
-            return values.ravel("F") #"F"
-        else:
-            return np.zeros((self.nd, bg.num_cells)).ravel("F")
-
+        data = np.zeros((self.nd, bg.num_cells))
+        data[0, :] = ux
+        data[1, :] = uy
+        return data.ravel()
     def bc_values_stress(self, bg: pp.BoundaryGrid) -> np.ndarray:
-        
-        if bg.parent.dim == self.nd:
-
-            values = np.zeros((self.nd, bg.num_cells))
-            domain_sides = self.domain_boundary_sides(bg)
-
-            # Assigning x-component values
-            values[0, domain_sides.north] = self.units.convert_units(0.0, "Pa") * bg.cell_volumes[domain_sides.north]
-            #values[0, domain_sides.south] = self.units.convert_units(0.0, "Pa") * bg.cell_volumes[domain_sides.south]
-
-            # Assigning y-component values
-            values[1, domain_sides.north] = self.units.convert_units(-3000000.0, "Pa") * bg.cell_volumes[domain_sides.north]
-            #values[1, domain_sides.south] = self.units.convert_units(0.0, "Pa") * bg.cell_volumes[domain_sides.south]
-            
-            return values.ravel("F") #FIX "F" deleted
-        else:
-            return np.zeros((self.nd, bg.num_cells)).ravel("F")
+        # FIX #6: Explicit zero traction on Neumann faces (ux on N/S)
+        return np.zeros((self.nd, bg.num_cells)).ravel("F")
 
 class InitialConditionsU2:
     """Zero initial conditions for u2."""
@@ -254,15 +213,105 @@ class BodyForceMixin:
     def _compute_body_force_values(self, subdomains: list[pp.Grid]) -> np.ndarray:
         """Compute MMS body force values at the current time step."""
         vals = []
-
-
+        A_MMS = 1.0e-3
+        b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
+        t = self.time_manager.time
+        beta = self.solid.shear_modulus2 / self.solid.viscosity
+        E1 = 2.0 * self.solid.shear_modulus    # ν=0.0 → E = 2μ
+        E2 = 2.0 * self.solid.shear_modulus2
+        k = E1 / 3.0 # Bulk modulus for ν=0.0 is K = E/3
+        k2 = E2 / 3.0
+        shear_modulus = self.solid.shear_modulus
+        shear_modulus2 = self.solid.shear_modulus2
+        lame_lambda = self.solid.lame_lambda
+        lame_lambda2 = self.solid.lame_lambda2
+        L = 0.8  # domain length [m]
+        Lx = L
+        Ly = L
+        kx = np.pi / Lx
+        ky = np.pi / Ly
         for sd in subdomains:
             data = np.zeros((sd.num_cells, self.nd))
             if sd.dim == 2:
+                cc = sd.cell_centers
+                sx = np.sin(kx * x)
+                cx = np.cos(kx * x)
+                sy = np.sin(ky * y)
+                cy = np.cos(ky * y)
 
-                data[:, 0] = 0.0 * sd.cell_volumes  # fx for all cells
-                data[:, 1] = 0.0 * sd.cell_volumes  # fy for all cells
-            vals.append(data.ravel()) #FIX2 "F" deleted# FIX #8: Must be F-order [x0,x1... y0,y1...]
+                sx = np.sin(kx * x)
+                cx = np.cos(kx * x)
+                sy = np.sin(ky * y)
+                cy = np.cos(ky * y)
+
+                T1 = 1.0 - np.exp(-b_MMS * t)
+                T2 = (b_MMS / (beta - b_MMS)) * (np.exp(-b_MMS * t) - np.exp(-beta * t))
+
+                term_x_E = (
+                    # Grupa sin(kx)*cos(ky)
+                    ( (lame_lambda + 2*shear_modulus)*kx**2*Ax + shear_modulus*ky**2*Ax ) * sx * sy 
+                    # Grupa cos(kx)*cos(ky) - to jest ta brakująca część!
+                    - ( (lame_lambda + shear_modulus)*kx*ky*Ay ) * cx * cy
+                )
+
+                term_x_E_vis = (
+                                ( (k2 + 4.0/3.0*shear_modulus2)*kx**2*Ax + shear_modulus2*ky**2*Ax ) * sx * sy
+                                - ( (k2 + 1.0/3.0*shear_modulus2)*kx*ky*Ay ) * cx * cy
+                )
+
+                term_y_E = (
+                            #    Grupa sin(kx)*sin(ky) - GŁÓWNY NAPĘD UY
+                            ( (lame_lambda + 2*shear_modulus)*ky**2*Ay + shear_modulus*kx**2*Ay ) * sx * sy
+                            # Grupa cos(kx)*sin(ky)
+                            - ( (lame_lambda + shear_modulus)*kx*ky*Ax ) * cx * cy
+                )
+
+                term_y_E_vis = (
+                                ( (lame_lambda2 + 2*shear_modulus2)*ky**2*Ay + shear_modulus2*kx**2*Ay ) * sx * sy
+                                - ( (lame_lambda2 + shear_modulus2)*kx*ky*Ax ) * cx * cy
+                )
+
+                force_x = term_x_E * T1 + term_x_E_vis * T2
+                force_y = term_y_E * T1 + term_y_E_vis * T2
+
+                
+                # f(x,t) = A*(π/L)²*sin(πx/L)*[E₁*(1-e^{-bt}) + E₂*(b/(b-β))*(e^{-βt}-e^{-bt})]
+                #force = A_MMS * (np.pi / L)**2 * np.sin(np.pi * cc[0] / L) * (
+                #    E1 * (1.0 - np.exp(-b_MMS * t))
+                #    + E2 * (b_MMS / (b_MMS - beta)) * (np.exp(-beta * t) - np.exp(-b_MMS * t))
+                #)
+                #data[:, 0] = force * sd.cell_volumes  # fx for all cells
+
+                #force_x = (np.pi**2 * (3.0 * Lx * b_MMS * shear_modulus2 * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
+                #        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                #        - 3.0 * Lx * shear_modulus * (1 - np.exp(b_MMS * t))*(b_MMS - beta) * (Ax * Lx * np.sin(np.pi * cc[0] / Lx) 
+                #        - Ay * Ly * np.cos(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 2 * Ly * b_MMS * shear_modulus2
+                #        * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] /Lx)
+                #        + Ay * Lx * np.cos(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                #        - Ly * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (3.0 * k *(Ax * Ly * np.sin(np.pi * cc[0] / Lx) - Ay * Lx * np.cos(np.pi * cc[0] / Lx))
+                #        + 2.0 * shear_modulus * (2.0 * Ax * Ly * np.sin(np.pi * cc[0] / Lx) + Ay * Lx * np.cos(np.pi * cc[0] / Lx))) * np.exp(t * (3.0 * b_MMS + 2.0 * beta)))
+                #        * np.exp(-2.0 * t * (2.0 * b_MMS + beta)) * np.cos(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
+                #)       
+
+                #force_y = (np.pi**2 * (-2.0 * Lx * b_MMS * shear_modulus2* (Ax * Ly * np.cos(np.pi * cc[0] / Lx) 
+                #            - 2.0 * Ay * Lx * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t))
+                #            * np.exp(t * (3.0 * b_MMS + beta)) - Lx * (1 - np.exp(b_MMS * t)) * (b_MMS - beta)
+                #            * (3.0 * k * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) + Ay * Lx * np.sin(np.pi * cc[0] / Lx)) 
+                #            - 2.0 * shear_modulus * (Ax * Ly * np.cos(np.pi * cc[0] / Lx) - 2.0 * Ay * Lx *np.sin(np.pi * cc[0] / Lx)))
+                #            * np.exp(t * (3.0 * b_MMS + 2.0 * beta)) + 3.0 * Ly * b_MMS * shear_modulus2 * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
+                #            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * (np.exp(b_MMS * t) - np.exp(beta * t)) * np.exp(t * (3.0 * b_MMS + beta)) 
+                #            - 3.0 * Ly * shear_modulus * (1 - np.exp(b_MMS * t)) * (b_MMS - beta) * (Ax * Lx * np.cos(np.pi * cc[0] / Lx) 
+                #            + Ay * Ly * np.sin(np.pi * cc[0] / Lx)) * np.exp(t * (3.0 * b_MMS + 2.0 * beta))) 
+                #            * np.exp(-2.0 * t * (2 * b_MMS + beta)) * np.sin(np.pi * cc[1] / Ly) / (3.0 * Lx**2 * Ly**2 * (b_MMS - beta))
+
+                #)
+
+
+                
+                data[:, 0] = force_x * sd.cell_volumes  # fx for all cells
+                data[:, 1] = force_y * sd.cell_volumes  # fy for all cells
+            
+            vals.append(data.ravel()) #FIX2 "F" deleted # FIX #8: Must be F-order [x0,x1... y0,y1...]
         return np.concatenate(vals)
 
     def body_force(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
@@ -313,7 +362,7 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
 
     def update_all_boundary_conditions(self) -> None:
         super().update_all_boundary_conditions()
-        self.update_boundary_condition(self.stress2_keyword, self.bc_values_stress2)
+        self.update_boundary_condition(self.stress2_keyword, self.bc_values_stress)
     
     def update_boundary_values_primary_variables(self) -> None:
         super().update_boundary_values_primary_variables()
@@ -322,17 +371,12 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
     def bc_values_displacement2(self, bg: pp.BoundaryGrid) -> np.ndarray:
         return np.zeros((self.nd, bg.num_cells)).ravel("F")
 
-    def bc_values_stress2(self, bg: pp.BoundaryGrid) -> np.ndarray:
-        """Zero Neumann BC for the viscous branch — load is applied only via u."""
-        return np.zeros((self.nd, bg.num_cells)).ravel("F")
-
 # =============================================================================
 # 7. Run Script
 # =============================================================================
 if __name__ == "__main__":
-
-    dt =  1 * pp.SECOND
-    final_time = 5.0 * pp.HOUR
+    dt = 1.0 * pp.SECOND #other 2, 4, 8
+    final_time = 100.0 * pp.SECOND
     time_manager = pp.TimeManager(
         schedule=[0.0, final_time],
         dt_init=dt,
@@ -340,20 +384,20 @@ if __name__ == "__main__":
     )
     
     solid_constants = ViscoelasticSolidConstants(
-        # E₁ = 2143.0 MPa, E₂ = 584.0 MPa , ν = 0.3 → λ = E*v/((1+v)(1-2v)), μ = E/(2*(1+v))
-        shear_modulus = 2143000000.0 / (2.0 * 1.3),     
-        shear_modulus2 = 584000000.0 / (2.0 * 1.3),    
-        lame_lambda = 2143000000.0 * 0.3 /(1.3 * (1 - 2 * 0.3)),
-        lame_lambda2 = 584000000.0 * 0.3 /(1.3 * (1 - 2 * 0.3)),
-        viscosity=180000000.0 * (60.0 * 60.0), #180.0 MPa*h,
-        fracture_normal_stiffness = 200000000000.0,
-        fracture_tangential_stiffness = 100000000000.0
+        # E₁ = 22575.7 MPa, E₂ = 11000.0 MPa (= 11 GPa), ν = 0.0 → μ = E/2.0, λ = 0.0
+        shear_modulus=22575700000.0 / 2.0,     # μ₁ = E₁/2.0 = 11,287,850,000.0 Pa
+        shear_modulus2=11000000000.0 / 2.0,    # μ₂ = E₂/2.0 = 5,500,000,000.0 Pa
+        lame_lambda=0.0,
+        lame_lambda2=0.0,
+        # FIX #4: η = μ₂ × τ (standard Maxwell: β = μ₂/η = 1.0/τ)
+        # τ_relax = 45.454545 days = 3,927,273.0 s
+        viscosity= 22575700000.0 * (45.454545 * 24.0 * 60.0 * 60.0)  #(11000000000.0 / 2.0) * (45.454545 * 24.0 * 60.0 * 60.0),
     )
     
     model_params = {
         "material_constants": {"solid": solid_constants, "fluid": pp.FluidComponent()},
         "time_manager": time_manager,
-        "plot_schedule": [pp.MINUTE * float(i) for i in range(0, 301, 60)],
+        "plot_schedule": [pp.MINUTE * float(i) for i in range(0, 301, 50)],
     }
 
     class ShowCase(ViscoelasticMomentumBalance):
@@ -367,53 +411,87 @@ if __name__ == "__main__":
             # Retrieve numerical displacement at the center
             if len(self.mdg.subdomains(dim=self.nd)) > 0:
                 sd = self.mdg.subdomains(dim=self.nd)[0]
-                center_coord = np.array([[0.2], [0.2], [0.0]])
+                center_coord = np.array([[0.395], [0.395], [0.0]])
                 diff = sd.cell_centers - center_coord
                 dist = np.linalg.norm(diff, axis=0)
                 center_cell = np.argmin(dist)
 
                 # u_vec is interleaved [x0, y0, x1, y1, ...]
                 u_vec = np.array(self.equation_system.evaluate(
-                    self.displacement(self.mdg.subdomains(dim=self.nd)))).ravel()
+                    self.displacement(self.mdg.subdomains()))).ravel()
                 
                 # Reshape to (2, N) where row 0 is ux, row 1 is uy
                 u_reshaped = u_vec.reshape(self.nd, -1, order='F')
                 ux_num = u_reshaped[0, :] #[0, center_cell]
                 uy_num = u_reshaped[1, :] #[1, center_cell]
 
-               
+                A_MMS, b_MMS = 1.0e-3, 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
+                t_now = self.time_manager.time
+                #ux_mms = A_MMS * np.sin(np.pi * 0.4 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                cc = sd.cell_centers
+                ux_mms = A_MMS * np.sin(np.pi * cc[0] / 0.8) * np.sin(np.pi * cc[1] / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                uy_mms = A_MMS * np.sin(np.pi * cc[0] / 0.8) * np.sin(np.pi * cc[1] / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
 
-                print(f"SIMULATION TIME: {self.time_manager.time}")
+                #Convergence calculation
+                error_x = ux_num - ux_mms
+                error_y = uy_num - uy_mms
+
+                print(f"CZAS SYMULACJI: {self.time_manager.time}")
                 print(f"MAX ux_num: {np.max(np.abs(ux_num))}")
-                print(f"MAX uy_num: {np.max(np.abs(uy_num))}")
-                print("\n")
+                print(f"MAX ux_mms: {np.max(np.abs(ux_mms))}")
+                print(f"DEBUG: diff_x_max = {np.max(np.abs(ux_num - ux_mms))}")
+                print(f"DEBUG: diff_y_max = {np.max(np.abs(uy_num - uy_mms))}")
 
-                                    
+                abs_L2_x = np.sqrt(np.sum(error_x**2 * sd.cell_volumes))
+                abs_L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes))
+                rel_L2_x = np.sqrt(np.sum(error_x**2 * sd.cell_volumes)) / np.sqrt(np.sum(ux_mms**2 * sd.cell_volumes))
+                rel_L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes)) / np.sqrt(np.sum(uy_mms**2 * sd.cell_volumes))
+
+                abs_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes))
+                rel_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes)) / np.sqrt(np.sum((ux_mms**2 + uy_mms**2) * sd.cell_volumes))
+
+                ux_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                uy_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
+                
+                if self.time_manager.time_index % 100 == 0:
+                    print(f"\n{'='*60}")
+                    print(f"  t = {current_days:.2f} days | center ({sd.cell_centers[0,center_cell]:.4f}, {sd.cell_centers[1,center_cell]:.4f})")
+                    # print(f"  ux_num  = {ux_num:.6e} m")
+                    # print(f"  ux_MMS  = {ux_mms_p:.6e} m")
+                    # print(f"  uy_num  = {uy_num:.6e} m")
+                    # print(f"  uy_MMS  = {uy_mms_p:.6e} m")
+                    # print(f"  error x   = {abs(ux_num - ux_mms_p)/abs(ux_mms_p)*100:.6e} %")
+                    # print(f"  error y   = {abs(uy_num - uy_mms_p)/abs(uy_mms_p)*100:.6e} %")
+                    print(f"  ABsolute L2 error x = {abs_L2_x:.6e} m")
+                    print(f"  ABsolute L2 error y = {abs_L2_y:.6e} m")
+                    print(f"  ABsolute L2 total error = {abs_L2_total:.6e} m")
+                    print(f"  Relative L2 error x = {rel_L2_x:.6e}")
+                    print(f"  Relative L2 error y = {rel_L2_y:.6e}")
+                    print(f"  Relative L2 total error = {rel_L2_total:.6e}")
+                    print("============================================================\n")
             
             sched = self.params.get('plot_schedule', [])
             if sched and self.time_manager.time >= sched[0]:
                 sched.pop(0)
-                mins = int(self.time_manager.time) # / 60.0)
+                mins = int(self.time_manager.time / 60.0)
                 
                 if not hasattr(self, '_vmax_u'):
-                    u_all = self.equation_system.evaluate(self.displacement(self.mdg.subdomains(dim=self.nd)))
-                    u2_all = self.equation_system.evaluate(self.displacement2(self.mdg.subdomains(dim=self.nd)))
+                    u_all = self.equation_system.evaluate(self.displacement(self.mdg.subdomains()))
+                    u2_all = self.equation_system.evaluate(self.displacement2(self.mdg.subdomains()))
                     u_mag = np.linalg.norm(u_all.reshape(self.nd, -1, order='F'), axis=0)
                     u2_mag = np.linalg.norm(u2_all.reshape(self.nd, -1, order='F'), axis=0)
-                    self._vmax_u, self._vmax_u2 = np.max(u_mag) * 1, np.max(u2_mag)
+                    self._vmax_u, self._vmax_u2 = np.max(u_mag) * 2.5, np.max(u2_mag)
                     print(f"--- Fixed VMAX: u={self._vmax_u:.2f}, u2={self._vmax_u2:.2f} ---")
 
                 for var_name, name, vmax in [(self.displacement_variable, "u", self._vmax_u), (self.displacement2_variable, "u2", self._vmax_u2)]:
-                    for sd, sd_data in self.mdg.subdomains(return_data=True, dim=self.nd):
+                    for sd, sd_data in self.mdg.subdomains(return_data=True):
                         # Get magnitude explicitly
                         vals = pp.get_solution_values(name=var_name, data=sd_data, time_step_index=0)
                         mag = np.linalg.norm(vals.reshape(self.nd, -1, order='F'), axis=0)
                         
                         plt.close('all')
-                        pp.plot_grid(sd, cell_value=mag, title=f"{name} at {mins} s", if_plot=False, color_map_limits=[0.0, vmax], plot_2d=True)
-                        plt.savefig(f"displacement_with_fractures_{name}_{mins}.png", dpi=200)
-
-                        
+                        pp.plot_grid(sd, cell_value=mag, title=f"{name} at {mins} min", if_plot=False, color_map_limits=[0.0, vmax], plot_2d=True)
+                        plt.savefig(f"displacement_{name}_{mins}.png", dpi=200)
 
     model = ShowCase(model_params)
     pp.run_time_dependent_model(model)
