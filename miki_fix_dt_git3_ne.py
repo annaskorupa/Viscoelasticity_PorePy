@@ -369,7 +369,9 @@ if __name__ == "__main__":
                         
                         plt.close('all')
                         pp.plot_grid(sd, cell_value=mag, title=f"{name} at {mins} s", if_plot=False, color_map_limits=[0.0, vmax], plot_2d=True)
-                        plt.savefig(f"displacement_{name}_{mins}.png", dpi=200)
+                        fig = plt.gcf()
+                        fig.axes[-1].set_ylabel("u [m]")
+                        plt.savefig(f"displacement_ne_{name}_{mins}.png", dpi=200)
 
                         
 
