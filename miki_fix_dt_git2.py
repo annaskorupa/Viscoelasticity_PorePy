@@ -214,6 +214,8 @@ class BodyForceMixin:
         """Compute MMS body force values at the current time step."""
         vals = []
         A_MMS = 1.0e-3
+        Ax = A_MMS
+        Ay = A_MMS
         b_MMS = 0.5 * (self.solid.shear_modulus2 / self.solid.viscosity)
         t = self.time_manager.time
         beta = self.solid.shear_modulus2 / self.solid.viscosity
@@ -234,6 +236,8 @@ class BodyForceMixin:
             data = np.zeros((sd.num_cells, self.nd))
             if sd.dim == 2:
                 cc = sd.cell_centers
+                x = cc[0]
+                y = cc[1]
                 sx = np.sin(kx * x)
                 cx = np.cos(kx * x)
                 sy = np.sin(ky * y)
@@ -448,7 +452,7 @@ if __name__ == "__main__":
                 rel_L2_y = np.sqrt(np.sum(error_y**2 * sd.cell_volumes)) / np.sqrt(np.sum(uy_mms**2 * sd.cell_volumes))
 
                 abs_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes))
-                rel_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes)) / np.sqrt(np.sum((ux_mms**2 + uy_mms**2) * sd.cell_volumes)
+                rel_L2_total = np.sqrt(np.sum((error_x**2 + error_y**2) * sd.cell_volumes)) / np.sqrt(np.sum((ux_mms**2 + uy_mms**2) * sd.cell_volumes))
 
                 ux_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
                 uy_mms_p = A_MMS * np.sin(np.pi * 0.15 / 0.8) * np.sin(np.pi * 0.15 / 0.8) * (1.0 - np.exp(-b_MMS * t_now))
@@ -491,6 +495,8 @@ if __name__ == "__main__":
                         
                         plt.close('all')
                         pp.plot_grid(sd, cell_value=mag, title=f"{name} at {mins} min", if_plot=False, color_map_limits=[0.0, vmax], plot_2d=True)
+                        fig = plt.gcf()
+                        fig.axes[-1].set_ylabel("u [m]")
                         plt.savefig(f"displacement_{name}_{mins}.png", dpi=200)
 
     model = ShowCase(model_params)
