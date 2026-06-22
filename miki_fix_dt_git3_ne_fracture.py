@@ -18,6 +18,55 @@ from porepy.applications.md_grids.domains import nd_cube_domain
 
 Scalar = pp.ad.Scalar
 
+
+def compute_strain_at_cell(sd, u_vec_flat, cell_idx, adj_csr, nd=2):
+    """Compute strain tensor at a single cell via least-squares gradient reconstruction.
+
+    Uses displacement values from neighboring cells (connected via shared faces)
+    to reconstruct the displacement gradient, then extracts the symmetric part.
+
+    Parameters:
+        sd: pp.Grid - the subdomain grid
+        u_vec_flat: np.ndarray - displacement vector (interleaved [x0,y0,x1,y1,...])
+        cell_idx: int - index of the cell at which to compute strain
+        adj_csr: scipy.sparse.csr_matrix - precomputed cell adjacency matrix
+        nd: int - number of spatial dimensions (2)
+
+    Returns:
+        exx, eyy, exy: float - strain tensor components
+    """
+    u = u_vec_flat.reshape(nd, -1, order='F')
+    ux, uy = u[0], u[1]
+    cc = sd.cell_centers[:nd, :]
+
+    # Get neighbor indices from precomputed adjacency
+    row_start = adj_csr.indptr[cell_idx]
+    row_end = adj_csr.indptr[cell_idx + 1]
+    neighbors = adj_csr.indices[row_start:row_end]
+    neighbors = neighbors[neighbors != cell_idx]
+
+    if len(neighbors) < 2:
+        return 0.0, 0.0, 0.0
+
+    # Coordinate differences
+    dx = cc[0, neighbors] - cc[0, cell_idx]
+    dy = cc[1, neighbors] - cc[1, cell_idx]
+    A = np.column_stack([dx, dy])
+
+    # Displacement differences
+    dux = ux[neighbors] - ux[cell_idx]
+    duy = uy[neighbors] - uy[cell_idx]
+
+    # Least-squares gradient: A @ [du/dx, du/dy]^T = delta_u
+    grad_ux, _, _, _ = np.linalg.lstsq(A, dux, rcond=None)
+    grad_uy, _, _, _ = np.linalg.lstsq(A, duy, rcond=None)
+
+    exx = grad_ux[0]                        # dux/dx
+    eyy = grad_uy[1]                        # duy/dy
+    exy = 0.5 * (grad_ux[1] + grad_uy[0])  # 0.5*(dux/dy + duy/dx)
+
+    return exx, eyy, exy
+
 # =============================================================================
 # 1. Material Constants
 # =============================================================================
@@ -339,6 +388,14 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
         self.stress2_keyword = "mechanics2"
         self.history_u = []
         self.history_u2 = []
+        # Strain history at monitoring point
+        self.strain_history = {
+            'times': [],
+            'exx_u': [], 'eyy_u': [], 'exy_u': [],
+            'exx_u2': [], 'eyy_u2': [], 'exy_u2': [],
+        }
+        self._adj_csr = None
+        self._monitor_cell = None
 
     def after_nonlinear_convergence(self) -> None:
         super().after_nonlinear_convergence()
@@ -457,6 +514,34 @@ if __name__ == "__main__":
                 print(f"MAX uy_num: {np.max(np.abs(uy_num))}")
                 print("\n")
 
+                # --- Record strain at monitoring point ---
+                if self._adj_csr is None:
+                    cf = sd.cell_faces.copy()
+                    cf.data = np.abs(cf.data)
+                    self._adj_csr = (cf.T @ cf).tocsr()
+                    monitor_coord = np.array([[0.05], [0.05], [0.0]])
+                    dists = np.linalg.norm(sd.cell_centers - monitor_coord, axis=0)
+                    self._monitor_cell = np.argmin(dists)
+                    print(f"--- Strain monitor cell: {self._monitor_cell}, "
+                          f"at ({sd.cell_centers[0, self._monitor_cell]:.4f}, "
+                          f"{sd.cell_centers[1, self._monitor_cell]:.4f}) ---")
+
+                exx_u, eyy_u, exy_u = compute_strain_at_cell(
+                    sd, u_vec, self._monitor_cell, self._adj_csr, self.nd)
+
+                u2_vec = np.array(self.equation_system.evaluate(
+                    self.displacement2(self.mdg.subdomains(dim=self.nd)))).ravel()
+                exx_u2, eyy_u2, exy_u2 = compute_strain_at_cell(
+                    sd, u2_vec, self._monitor_cell, self._adj_csr, self.nd)
+
+                self.strain_history['times'].append(self.time_manager.time / 3600.0)
+                self.strain_history['exx_u'].append(exx_u)
+                self.strain_history['eyy_u'].append(eyy_u)
+                self.strain_history['exy_u'].append(exy_u)
+                self.strain_history['exx_u2'].append(exx_u2)
+                self.strain_history['eyy_u2'].append(eyy_u2)
+                self.strain_history['exy_u2'].append(exy_u2)
+
                                     
             
             sched = self.params.get('plot_schedule', [])
@@ -487,3 +572,80 @@ if __name__ == "__main__":
     model = ShowCase(model_params)
     pp.run_time_dependent_model(model)
     print("Done.")
+
+    # ==========================================================================
+    # 8. Strain vs. Time Plots
+    # ==========================================================================
+    if len(model.strain_history['times']) > 0:
+        import matplotlib as mpl
+        mpl.rcParams.update({
+            "font.family": "serif",
+            "font.serif": ["DejaVu Serif", "Times New Roman"],
+            "mathtext.fontset": "dejavuserif",
+            "font.size": 11,
+            "axes.labelsize": 13,
+            "axes.titlesize": 13,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "legend.fontsize": 11,
+            "lines.linewidth": 1.5,
+            "lines.markersize": 7,
+            "axes.linewidth": 0.8,
+            "xtick.direction": "in",
+            "ytick.direction": "in",
+            "xtick.top": True,
+            "ytick.right": True,
+            "savefig.dpi": 300,
+            "savefig.bbox": "tight",
+        })
+
+        t = np.array(model.strain_history['times'])
+        me = max(1, len(t) // 20)  # marker spacing
+
+        # --- Single-panel: epsilon_yy vs time (main creep curve) ---
+        fig1, ax1 = plt.subplots(figsize=(8, 6))
+        eyy_u = np.array(model.strain_history['eyy_u'])
+        eyy_u2 = np.array(model.strain_history['eyy_u2'])
+
+        ax1.plot(t, eyy_u * 100, 'b-o', markevery=me, markersize=5,
+                 linewidth=1.5, label=r'$\varepsilon_{yy}(u)$ \u2014 total')
+        ax1.plot(t, eyy_u2 * 100, 'r-s', markevery=me, markersize=5,
+                 linewidth=1.5, label=r'$\varepsilon_{yy}(u_2)$ \u2014 viscous branch')
+        ax1.set_xlabel(r'$t$ (h)')
+        ax1.set_ylabel(r'$\varepsilon_{yy}$ (%)')
+        ax1.legend(framealpha=1.0, edgecolor='black', fancybox=False)
+        ax1.grid(True, alpha=0.3)
+        for spine in ax1.spines.values():
+            spine.set_linewidth(1.5)
+        ax1.tick_params(width=1.5, direction='in', top=True, right=True)
+        fig1.tight_layout()
+        fig1.savefig('strain_eyy_vs_time.png', dpi=300)
+        plt.close(fig1)
+        print("Saved strain_eyy_vs_time.png")
+
+        # --- Three-panel: all strain components ---
+        fig2, axes = plt.subplots(1, 3, figsize=(18, 5))
+        components = [
+            ('exx', r'$\varepsilon_{xx}$'),
+            ('eyy', r'$\varepsilon_{yy}$'),
+            ('exy', r'$\varepsilon_{xy}$'),
+        ]
+        for ax, (comp, label) in zip(axes, components):
+            vals_u = np.array(model.strain_history[f'{comp}_u'])
+            vals_u2 = np.array(model.strain_history[f'{comp}_u2'])
+            ax.plot(t, vals_u * 100, 'b-o', markevery=me, markersize=4,
+                    linewidth=1.5, label=r'$\varepsilon(u)$ total')
+            ax.plot(t, vals_u2 * 100, 'r-s', markevery=me, markersize=4,
+                    linewidth=1.5, label=r'$\varepsilon(u_2)$ viscous')
+            ax.set_xlabel(r'$t$ (h)')
+            ax.set_ylabel(f'{label} (%)')
+            ax.legend(fontsize=10, framealpha=1.0, edgecolor='black', fancybox=False)
+            ax.grid(True, alpha=0.3)
+            for spine in ax.spines.values():
+                spine.set_linewidth(1.2)
+            ax.tick_params(direction='in', top=True, right=True)
+        fig2.suptitle('Strain components at monitoring point', fontsize=14, y=1.02)
+        fig2.tight_layout()
+        fig2.savefig('strain_components_vs_time.png', dpi=300, bbox_inches='tight')
+        plt.close(fig2)
+        print("Saved strain_components_vs_time.png")
