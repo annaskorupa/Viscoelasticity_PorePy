@@ -458,20 +458,28 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
 if __name__ == "__main__":
 
     dt =  1 * pp.SECOND
-    final_time = 5.0 * pp.HOUR
+    final_time = 8.0 * pp.HOUR
     time_manager = pp.TimeManager(
         schedule=[0.0, final_time],
         dt_init=dt,
         dt_min_max=(0.0 * pp.MINUTE, final_time),
     )
     
+    # Plane strain correction: in 2D, εyy = σ*(1-ν²)/E, but article uses 1D: εyy = σ/E
+    # Scale E by (1-ν²) so that 2D result matches 1D article values
+    nu = 0.3
+    ps_factor = (1.0 - nu**2)  # = 0.91
+    E1 = 2143000000.0 * ps_factor   # E₁ = 2143 MPa (article) × 0.91 for plane strain
+    E2 = 584000000.0 * ps_factor    # E₂ = 584 MPa × 0.91
+    eta = 180000000.0 * ps_factor   # η = 180 MPa·h × 0.91 (preserves relaxation time τ = η/E₂)
+
     solid_constants = ViscoelasticSolidConstants(
-        # E₁ = 2143.0 MPa, E₂ = 584.0 MPa , ν = 0.3 → λ = E*v/((1+v)(1-2v)), μ = E/(2*(1+v))
-        shear_modulus = 2143000000.0 / (2.0 * 1.3),     
-        shear_modulus2 = 584000000.0 / (2.0 * 1.3),    
-        lame_lambda = 2143000000.0 * 0.3 /(1.3 * (1 - 2 * 0.3)),
-        lame_lambda2 = 584000000.0 * 0.3 /(1.3 * (1 - 2 * 0.3)),
-        viscosity=180000000.0 * (60.0 * 60.0), #180.0 MPa*h,
+        # λ = E*ν/((1+ν)(1-2ν)), μ = E/(2*(1+ν))
+        shear_modulus = E1 / (2.0 * (1.0 + nu)),
+        shear_modulus2 = E2 / (2.0 * (1.0 + nu)),
+        lame_lambda = E1 * nu / ((1.0 + nu) * (1.0 - 2.0 * nu)),
+        lame_lambda2 = E2 * nu / ((1.0 + nu) * (1.0 - 2.0 * nu)),
+        viscosity = eta * (60.0 * 60.0),  # convert MPa·h → Pa·s
         fracture_normal_stiffness = 200000000000.0,
         fracture_tangential_stiffness = 100000000000.0
     )
@@ -514,33 +522,46 @@ if __name__ == "__main__":
                 print(f"MAX uy_num: {np.max(np.abs(uy_num))}")
                 print("\n")
 
-                # --- Record strain at monitoring point ---
-                if self._adj_csr is None:
-                    cf = sd.cell_faces.copy()
-                    cf.data = np.abs(cf.data)
-                    self._adj_csr = (cf.T @ cf).tocsr()
-                    monitor_coord = np.array([[0.05], [0.05], [0.0]])
-                    dists = np.linalg.norm(sd.cell_centers - monitor_coord, axis=0)
-                    self._monitor_cell = np.argmin(dists)
-                    print(f"--- Strain monitor cell: {self._monitor_cell}, "
-                          f"at ({sd.cell_centers[0, self._monitor_cell]:.4f}, "
-                          f"{sd.cell_centers[1, self._monitor_cell]:.4f}) ---")
-
-                exx_u, eyy_u, exy_u = compute_strain_at_cell(
-                    sd, u_vec, self._monitor_cell, self._adj_csr, self.nd)
+                # --- Record average specimen strain (extensometer: uy_top / height) ---
+                if not hasattr(self, '_top_cells') or self._top_cells is None:
+                    # One-time initialization: find cells near the top boundary
+                    self._domain_height = 0.1  # domain is 0.1 m tall
+                    # Top cells: cells whose centers have y > 0.09 (top 10% of domain)
+                    y_coords = sd.cell_centers[1, :]
+                    y_threshold = 0.09  # top 10% of domain
+                    self._top_cells = np.where(y_coords > y_threshold)[0]
+                    if len(self._top_cells) == 0:
+                        # Fallback: use top 20% of cells
+                        y_threshold = 0.08
+                        self._top_cells = np.where(y_coords > y_threshold)[0]
+                    print(f"--- Strain measurement: extensometer (uy_top / height) ---")
+                    print(f"--- Domain height: {self._domain_height:.4f} m ---")
+                    print(f"--- Top cells (y > {y_threshold}): {len(self._top_cells)} ---")
+                    print(f"--- Mean y of top cells: {np.mean(y_coords[self._top_cells]):.4f} ---")
 
                 u2_vec = np.array(self.equation_system.evaluate(
                     self.displacement2(self.mdg.subdomains(dim=self.nd)))).ravel()
-                exx_u2, eyy_u2, exy_u2 = compute_strain_at_cell(
-                    sd, u2_vec, self._monitor_cell, self._adj_csr, self.nd)
+
+                # Reshape displacements: row 0 = ux, row 1 = uy
+                u_2d = u_vec.reshape(self.nd, -1, order='F')
+                u2_2d = u2_vec.reshape(self.nd, -1, order='F')
+
+                # Extensometer: εyy = mean(uy at top cells) / height
+                eyy_u_avg = np.mean(u_2d[1, self._top_cells]) / self._domain_height
+                exx_u_avg = np.mean(u_2d[0, self._top_cells]) / self._domain_height
+                exy_u_avg = 0.0
+                # For u2:
+                eyy_u2_avg = np.mean(u2_2d[1, self._top_cells]) / self._domain_height
+                exx_u2_avg = np.mean(u2_2d[0, self._top_cells]) / self._domain_height
+                exy_u2_avg = 0.0
 
                 self.strain_history['times'].append(self.time_manager.time / 3600.0)
-                self.strain_history['exx_u'].append(exx_u)
-                self.strain_history['eyy_u'].append(eyy_u)
-                self.strain_history['exy_u'].append(exy_u)
-                self.strain_history['exx_u2'].append(exx_u2)
-                self.strain_history['eyy_u2'].append(eyy_u2)
-                self.strain_history['exy_u2'].append(exy_u2)
+                self.strain_history['exx_u'].append(exx_u_avg)
+                self.strain_history['eyy_u'].append(eyy_u_avg)
+                self.strain_history['exy_u'].append(exy_u_avg)
+                self.strain_history['exx_u2'].append(exx_u2_avg)
+                self.strain_history['eyy_u2'].append(eyy_u2_avg)
+                self.strain_history['exy_u2'].append(exy_u2_avg)
 
                                     
             
@@ -602,18 +623,19 @@ if __name__ == "__main__":
         t = np.array(model.strain_history['times'])
         me = max(1, len(t) // 20)  # marker spacing
 
-        # --- Single-panel: epsilon_yy vs time (main creep curve) ---
+        # --- Single-panel: |epsilon_yy| vs time — matching article Figure 3 ---
         fig1, ax1 = plt.subplots(figsize=(8, 6))
         eyy_u = np.array(model.strain_history['eyy_u'])
         eyy_u2 = np.array(model.strain_history['eyy_u2'])
 
-        ax1.plot(t, eyy_u * 100, 'b-o', markevery=me, markersize=5,
-                 linewidth=1.5, label=r'$\varepsilon_{yy}(u)$ \u2014 total')
-        ax1.plot(t, eyy_u2 * 100, 'r-s', markevery=me, markersize=5,
-                 linewidth=1.5, label=r'$\varepsilon_{yy}(u_2)$ \u2014 viscous branch')
-        ax1.set_xlabel(r'$t$ (h)')
-        ax1.set_ylabel(r'$\varepsilon_{yy}$ (%)')
-        ax1.legend(framealpha=1.0, edgecolor='black', fancybox=False)
+        # Show absolute value (article shows positive strain for compression)
+        ax1.plot(t, np.abs(eyy_u) * 100, 'r-', linewidth=1.5,
+                 label='Simulation with the proposed model')
+        ax1.set_xlabel('Time (h)', fontsize=13)
+        ax1.set_ylabel('Strain (%)', fontsize=13)
+        ax1.set_xlim(0, 8)
+        ax1.set_ylim(0.10, 0.15)
+        ax1.legend(framealpha=1.0, edgecolor='black', fancybox=False, loc='lower right')
         ax1.grid(True, alpha=0.3)
         for spine in ax1.spines.values():
             spine.set_linewidth(1.5)
