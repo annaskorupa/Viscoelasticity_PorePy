@@ -469,9 +469,9 @@ if __name__ == "__main__":
     # Scale E by (1-ν²) so that 2D result matches 1D article values
     nu = 0.3
     ps_factor = 0.918  # precisely tuned to hit 0.140% asymptote
-    E1 = 2143000000.0 * ps_factor   # E₁ = 2143 MPa (article) × correction
-    E2 = 584000000.0 * ps_factor    # E₂ = 584 MPa × correction
-    eta = 180000000.0 * ps_factor * 0.35  # η optimized to 35% for the best fit to the experimental knee
+    E1 = 2143000000.0 #* ps_factor   # E₁ = 2143 MPa (article) × correction
+    E2 = 584000000.0 #* ps_factor    # E₂ = 584 MPa × correction
+    eta = 180000000.0 #* ps_factor * 0.35  # η optimized to 35% for the best fit to the experimental knee
 
     solid_constants = ViscoelasticSolidConstants(
         # λ = E*ν/((1+ν)(1-2ν)), μ = E/(2*(1+ν))

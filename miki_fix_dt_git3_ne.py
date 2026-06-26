@@ -18,6 +18,54 @@ from porepy.applications.md_grids.domains import nd_cube_domain
 
 Scalar = pp.ad.Scalar
 
+def compute_strain_at_cell(sd, u_vec_flat, cell_idx, adj_csr, nd=2):
+    """Compute strain tensor at a single cell via least-squares gradient reconstruction.
+
+    Uses displacement values from neighboring cells (connected via shared faces)
+    to reconstruct the displacement gradient, then extracts the symmetric part.
+
+    Parameters:
+        sd: pp.Grid - the subdomain grid
+        u_vec_flat: np.ndarray - displacement vector (interleaved [x0,y0,x1,y1,...])
+        cell_idx: int - index of the cell at which to compute strain
+        adj_csr: scipy.sparse.csr_matrix - precomputed cell adjacency matrix
+        nd: int - number of spatial dimensions (2)
+
+    Returns:
+        exx, eyy, exy: float - strain tensor components
+    """
+    u = u_vec_flat.reshape(nd, -1, order='F')
+    ux, uy = u[0], u[1]
+    cc = sd.cell_centers[:nd, :]
+
+    # Get neighbor indices from precomputed adjacency
+    row_start = adj_csr.indptr[cell_idx]
+    row_end = adj_csr.indptr[cell_idx + 1]
+    neighbors = adj_csr.indices[row_start:row_end]
+    neighbors = neighbors[neighbors != cell_idx]
+
+    if len(neighbors) < 2:
+        return 0.0, 0.0, 0.0
+
+    # Coordinate differences
+    dx = cc[0, neighbors] - cc[0, cell_idx]
+    dy = cc[1, neighbors] - cc[1, cell_idx]
+    A = np.column_stack([dx, dy])
+
+    # Displacement differences
+    dux = ux[neighbors] - ux[cell_idx]
+    duy = uy[neighbors] - uy[cell_idx]
+
+    # Least-squares gradient: A @ [du/dx, du/dy]^T = delta_u
+    grad_ux, _, _, _ = np.linalg.lstsq(A, dux, rcond=None)
+    grad_uy, _, _, _ = np.linalg.lstsq(A, duy, rcond=None)
+
+    exx = grad_ux[0]                        # dux/dx
+    eyy = grad_uy[1]                        # duy/dy
+    exy = 0.5 * (grad_ux[1] + grad_uy[0])  # 0.5*(dux/dy + duy/dx)
+
+    return exx, eyy, exy
+
 # =============================================================================
 # 1. Material Constants
 # =============================================================================
@@ -242,6 +290,23 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
     def __init__(self, params: dict | None = None):
         super().__init__(params)
         self.stress2_keyword = "mechanics2"
+        self.history_u = []
+        self.history_u2 = []
+        # Strain history at monitoring point
+        self.strain_history = {
+            'times': [],
+            'exx_u': [], 'eyy_u': [], 'exy_u': [],
+            'exx_u2': [], 'eyy_u2': [], 'exy_u2': [],
+        }
+        self._adj_csr = None
+        self._monitor_cell = None
+
+    def after_nonlinear_convergence(self) -> None:
+        super().after_nonlinear_convergence()
+        u_val = np.array(self.equation_system.evaluate(self.displacement(self.mdg.subdomains(dim=self.nd)))).ravel()
+        u2_val = np.array(self.equation_system.evaluate(self.displacement2(self.mdg.subdomains(dim=self.nd)))).ravel()
+        self.history_u.append(u_val)
+        self.history_u2.append(u2_val)
 
     def before_nonlinear_loop(self) -> None:
         """FIX #8: Update body force values in data dictionary each time step."""
@@ -284,6 +349,10 @@ class ViscoelasticMomentumBalance(GeometryMixin, BoundaryConditionsMixin, BodyFo
         self.update_boundary_condition(self.displacement2_variable, self.bc_values_displacement2)
 
     def bc_values_displacement2(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        return np.zeros((self.nd, bg.num_cells)).ravel("F")
+    
+    def bc_values_stress2(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        """Zero Neumann BC for the viscous branch — load is applied only via u."""
         return np.zeros((self.nd, bg.num_cells)).ravel("F")
 
 # =============================================================================
@@ -346,6 +415,47 @@ if __name__ == "__main__":
                 print(f"MAX uy_num: {np.max(np.abs(uy_num))}")
                 print("\n")
 
+                # --- Record average specimen strain (extensometer: uy_top / height) ---
+                if not hasattr(self, '_top_cells') or self._top_cells is None:
+                    # One-time initialization: find cells near the top boundary
+                    self._domain_height = 0.1  # domain is 0.1 m tall
+                    # Top cells: cells whose centers have y > 0.09 (top 10% of domain)
+                    y_coords = sd.cell_centers[1, :]
+                    y_threshold = 0.09  # top 10% of domain
+                    self._top_cells = np.where(y_coords > y_threshold)[0]
+                    if len(self._top_cells) == 0:
+                        # Fallback: use top 20% of cells
+                        y_threshold = 0.08
+                        self._top_cells = np.where(y_coords > y_threshold)[0]
+                    print(f"--- Strain measurement: extensometer (uy_top / height) ---")
+                    print(f"--- Domain height: {self._domain_height:.4f} m ---")
+                    print(f"--- Top cells (y > {y_threshold}): {len(self._top_cells)} ---")
+                    print(f"--- Mean y of top cells: {np.mean(y_coords[self._top_cells]):.4f} ---")
+
+                u2_vec = np.array(self.equation_system.evaluate(
+                    self.displacement2(self.mdg.subdomains(dim=self.nd)))).ravel()
+
+                # Reshape displacements: row 0 = ux, row 1 = uy
+                u_2d = u_vec.reshape(self.nd, -1, order='F')
+                u2_2d = u2_vec.reshape(self.nd, -1, order='F')
+
+                # Extensometer: εyy = mean(uy at top cells) / height
+                eyy_u_avg = np.mean(u_2d[1, self._top_cells]) / self._domain_height
+                exx_u_avg = np.mean(u_2d[0, self._top_cells]) / self._domain_height
+                exy_u_avg = 0.0
+                # For u2:
+                eyy_u2_avg = np.mean(u2_2d[1, self._top_cells]) / self._domain_height
+                exx_u2_avg = np.mean(u2_2d[0, self._top_cells]) / self._domain_height
+                exy_u2_avg = 0.0
+
+                self.strain_history['times'].append(self.time_manager.time / 3600.0)
+                self.strain_history['exx_u'].append(exx_u_avg)
+                self.strain_history['eyy_u'].append(eyy_u_avg)
+                self.strain_history['exy_u'].append(exy_u_avg)
+                self.strain_history['exx_u2'].append(exx_u2_avg)
+                self.strain_history['eyy_u2'].append(eyy_u2_avg)
+                self.strain_history['exy_u2'].append(exy_u2_avg)
+
                                     
             
             sched = self.params.get('plot_schedule', [])
@@ -378,3 +488,111 @@ if __name__ == "__main__":
     model = ShowCase(model_params)
     pp.run_time_dependent_model(model)
     print("Done.")
+
+    # ==========================================================================
+    # 8. Strain vs. Time Plots
+    # ==========================================================================
+    if len(model.strain_history['times']) > 0:
+        import matplotlib as mpl
+        mpl.rcParams.update({
+            "font.family": "serif",
+            "font.serif": ["DejaVu Serif", "Times New Roman"],
+            "mathtext.fontset": "dejavuserif",
+            "font.size": 11,
+            "axes.labelsize": 13,
+            "axes.titlesize": 13,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "legend.fontsize": 11,
+            "lines.linewidth": 1.5,
+            "lines.markersize": 7,
+            "axes.linewidth": 0.8,
+            "xtick.direction": "in",
+            "ytick.direction": "in",
+            "xtick.top": True,
+            "ytick.right": True,
+            "savefig.dpi": 300,
+            "savefig.bbox": "tight",
+        })
+
+        t = np.array(model.strain_history['times'])
+        me = max(1, len(t) // 20)  # marker spacing
+
+        # --- Single-panel: |epsilon_yy| vs time — matching article Figure 3 ---
+        fig1, ax1 = plt.subplots(figsize=(8, 6))
+        eyy_u = np.array(model.strain_history['eyy_u'])
+        eyy_u2 = np.array(model.strain_history['eyy_u2'])
+
+        # ----- Experimental data from article (digitized from Figure 3) -----
+        t_exp = np.array([
+            0.0, 0.15, 0.30, 0.45, 0.70, 1.00, 1.25, 1.50, 1.80, 2.10,
+            2.35, 2.60, 2.85, 3.10, 3.35, 3.60, 3.85, 4.10, 4.35, 4.60,
+            4.85, 5.10, 5.35, 5.60, 5.85, 6.10, 6.35, 6.60, 6.85, 7.10, 
+            7.35, 7.60
+        ])
+        e_exp = np.array([
+            0.1115, 0.1180, 0.1280, 0.1340, 0.1375, 0.1380, 0.1390, 0.1390, 0.1400, 0.1400,
+            0.1395, 0.1405, 0.1405, 0.1400, 0.1390, 0.1395, 0.1390, 0.1390, 0.1395, 0.1395,
+            0.1390, 0.1395, 0.1390, 0.1390, 0.1390, 0.1395, 0.1400, 0.1410, 0.1400, 0.1395,
+            0.1400, 0.1400
+        ])
+
+        # ----- 1D analytical simulation (digitized from article's red curve) -----
+        t_1d_art = np.array([
+            0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0
+        ])
+        e_1d_art = np.array([
+            0.1110, 0.1155, 0.1205, 0.1245, 0.1280, 0.1310, 0.1330, 0.1355, 0.1370, 0.1380, 0.1390, 0.1395, 0.1398, 0.1400, 0.1400, 0.1400, 0.1400
+        ])
+        from scipy.interpolate import PchipInterpolator
+        interp_1d = PchipInterpolator(t_1d_art, e_1d_art)
+        t_1d = np.linspace(0, 8, 200)
+        eps_1d_pct = interp_1d(t_1d)
+
+        # ----- Plot all three -----
+        ax1.plot(t_exp, e_exp, 'bD', markersize=6,
+                 label='Experimental data')
+        ax1.plot(t_1d, eps_1d_pct, 'k--', linewidth=1.5,
+                 label='1D simulation (article)')
+        ax1.plot(t, np.abs(eyy_u) * 100, 'r-', linewidth=1.5,
+                 label='2D simulation (PorePy)')
+        ax1.set_xlabel('Time (h)', fontsize=13)
+        ax1.set_ylabel('Strain (%)', fontsize=13)
+        ax1.set_xlim(0, 8)
+        ax1.set_ylim(0.10, 0.15)
+        ax1.legend(framealpha=1.0, edgecolor='black', fancybox=False, loc='lower right')
+        ax1.grid(True, alpha=0.3)
+        for spine in ax1.spines.values():
+            spine.set_linewidth(1.5)
+        ax1.tick_params(width=1.5, direction='in', top=True, right=True)
+        fig1.tight_layout()
+        fig1.savefig('strain_eyy_vs_time.png', dpi=300)
+        plt.close(fig1)
+        print("Saved strain_eyy_vs_time.png")
+
+        # --- Three-panel: all strain components ---
+        fig2, axes = plt.subplots(1, 3, figsize=(18, 5))
+        components = [
+            ('exx', r'$\varepsilon_{xx}$'),
+            ('eyy', r'$\varepsilon_{yy}$'),
+            ('exy', r'$\varepsilon_{xy}$'),
+        ]
+        for ax, (comp, label) in zip(axes, components):
+            vals_u = np.array(model.strain_history[f'{comp}_u'])
+            vals_u2 = np.array(model.strain_history[f'{comp}_u2'])
+            ax.plot(t, vals_u * 100, 'b-o', markevery=me, markersize=4,
+                    linewidth=1.5, label=r'$\varepsilon(u)$ total')
+            ax.plot(t, vals_u2 * 100, 'r-s', markevery=me, markersize=4,
+                    linewidth=1.5, label=r'$\varepsilon(u_2)$ viscous')
+            ax.set_xlabel(r'$t$ (h)')
+            ax.set_ylabel(f'{label} (%)')
+            ax.legend(fontsize=10, framealpha=1.0, edgecolor='black', fancybox=False)
+            ax.grid(True, alpha=0.3)
+            for spine in ax.spines.values():
+                spine.set_linewidth(1.2)
+            ax.tick_params(direction='in', top=True, right=True)
+        fig2.suptitle('Strain components at monitoring point', fontsize=14, y=1.02)
+        fig2.tight_layout()
+        fig2.savefig('strain_components_vs_time.png', dpi=300, bbox_inches='tight')
+        plt.close(fig2)
+        print("Saved strain_components_vs_time.png")
