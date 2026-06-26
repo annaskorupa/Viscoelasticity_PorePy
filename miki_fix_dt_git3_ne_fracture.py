@@ -658,7 +658,7 @@ if __name__ == "__main__":
 
         # ----- Plot all three -----
         ax1.plot(t_exp, e_exp, 'bD', markersize=6,
-                 label='Experimental data [10]')
+                 label='Experimental data')
         ax1.plot(t_1d, eps_1d_pct, 'k--', linewidth=1.5,
                  label='1D simulation (article)')
         ax1.plot(t, np.abs(eyy_u) * 100, 'r-', linewidth=1.5,
