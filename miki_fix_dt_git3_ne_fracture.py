@@ -104,9 +104,9 @@ class GeometryMixin:
         frac_1 = pp.LineFracture(frac_1_points)
         self._fractures = [frac_1]    
     def grid_type(self) -> str:
-        return self.params.get("grid_type", "simplex")
+        return self.params.get("grid_type", "simplex")#cartesian
     def meshing_arguments(self) -> dict:
-        return {"cell_size": self.params.get("cell_size", 0.005)}
+        return {"cell_size": self.params.get("cell_size", 0.005)}#0.00125
 
 # =============================================================================
 # 3. Constitutive Laws for u2
@@ -588,7 +588,7 @@ if __name__ == "__main__":
                         pp.plot_grid(sd, cell_value=mag, title=f"{name} at {mins} s", if_plot=False, color_map_limits=[0.0, vmax], plot_2d=True)
                         fig = plt.gcf()
                         fig.axes[-1].set_ylabel("u [m]")
-                        plt.savefig(f"displacement_with_fractures_{name}_{mins}.png", dpi=200)
+                        plt.savefig(f"displacement_with_fractures_{name}_{mins}.png", dpi=200)#_ne
 
                         
 
@@ -666,16 +666,16 @@ if __name__ == "__main__":
         ax1.set_xlabel('Time (h)', fontsize=13)
         ax1.set_ylabel('Strain (%)', fontsize=13)
         ax1.set_xlim(0, 8)
-        ax1.set_ylim(0.10, 0.15)
+        ax1.set_ylim(0.09, 0.15)
         ax1.legend(framealpha=1.0, edgecolor='black', fancybox=False, loc='lower right')
         ax1.grid(True, alpha=0.3)
         for spine in ax1.spines.values():
             spine.set_linewidth(1.5)
         ax1.tick_params(width=1.5, direction='in', top=True, right=True)
         fig1.tight_layout()
-        fig1.savefig('strain_eyy_vs_time.png', dpi=300)
+        fig1.savefig('strain_eyy_vs_time_with_frac.png', dpi=300)#without
         plt.close(fig1)
-        print("Saved strain_eyy_vs_time.png")
+        print("Saved strain_eyy_vs_time_with_frac.png")#without
 
         # --- Three-panel: all strain components ---
         fig2, axes = plt.subplots(1, 3, figsize=(18, 5))
