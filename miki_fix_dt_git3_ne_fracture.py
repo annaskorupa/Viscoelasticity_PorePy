@@ -317,8 +317,8 @@ class BoundaryConditionsMixin:
 
             # Assigning y-component values
             time_hours = self.time_manager.time / 3600.0
-            damage_factor = np.exp(self.solid.omega * time_hours)
-            if damage_factor > 10.0: damage_factor = 10.0
+            damage_factor = 1.0#np.exp(self.solid.omega * time_hours)
+            if damage_factor > 1.0: damage_factor = 1.0 #10.0: damage_factor = 10.0
             val = -3000000.0 * damage_factor
             values[1, domain_sides.north] = self.units.convert_units(val, "Pa") * bg.cell_volumes[domain_sides.north]
             #values[1, domain_sides.south] = self.units.convert_units(0.0, "Pa") * bg.cell_volumes[domain_sides.south]
@@ -468,7 +468,7 @@ if __name__ == "__main__":
     # Plane strain correction: in 2D, εyy = σ*(1-ν²)/E, but article uses 1D: εyy = σ/E
     # Scale E by (1-ν²) so that 2D result matches 1D article values
     nu = 0.3
-    ps_factor = 0.918  # precisely tuned to hit 0.140% asymptote
+    #ps_factor = 0.918  # precisely tuned to hit 0.140% asymptote
     E1 = 2143000000.0 #* ps_factor   # E₁ = 2143 MPa (article) × correction
     E2 = 584000000.0 #* ps_factor    # E₂ = 584 MPa × correction
     eta = 180000000.0 #* ps_factor * 0.35  # η optimized to 35% for the best fit to the experimental knee
