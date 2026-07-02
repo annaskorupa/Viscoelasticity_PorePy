@@ -36,7 +36,7 @@ os.makedirs("_output", exist_ok=True)
 NU = 0.3
 E1 = 2_143_000_000.0          # 2143 MPa
 E2 = 584_000_000.0            # 584 MPa
-ETA = 11_000_000_000.0 * (45.454545 * 24.0 * 60.0 * 60.0)  # Pa·s
+ETA = 180000000.0 * (60.0 * 60.0)  # Pa·s
 
 DT = 1.0 * pp.SECOND
 FINAL_TIME = 8.0 * pp.HOUR
