@@ -1,21 +1,19 @@
-"""1D analytical creep analysis based on J-body model (Lv et al., 2019).
+"""Quasi-1D PorePy viscoelastic creep simulation.
 
-Implements equation (3) from the article — the steady-state creep solution
-of the J-body (Zener / Standard Linear Solid) model under constant
-uniaxial compression σ₀ = 3 MPa, without damage (D(t) = 0).
-
-    ε(t) = σ₀/E₁ · [1 − E₂/(E₁+E₂) · exp(−t/τ)]
-
-where τ = η·(E₁+E₂) / (E₁·E₂)
+Runs a quasi-1D simulation using a narrow 2D strip (one cell wide)
+with roller boundary conditions, reproducing 1D uniaxial compression.
 
 Parameters (from article, Section 4.1):
-    σ₀ = 3 MPa
-    E₁ = 2143 MPa
-    E₂ = 584 MPa
-    η  = 180 MPa·h
+    sigma_0 = 3 MPa
+    E_1 = 2143 MPa
+    E_2 = 584 MPa
+    eta = 180 MPa*h
+    nu  = 0.0 (set to zero so that the 2D Lame formulation
+               reduces to the 1D modulus: lambda+2*mu = E)
 
 Produces:
     ``_output/strain_eyy_1d.png`` — ε(t) comparison plot
+    ``_output/strain_1d.npz``     — raw strain history
 
 Usage::
 
@@ -24,12 +22,16 @@ Usage::
 
 import os
 import numpy as np
+import porepy as pp
 import matplotlib.pyplot as plt
 
 from scipy.interpolate import PchipInterpolator
 
 from src.viscoelastic_porepy import (
+    ViscoelasticSolidConstants,
+    ViscoelasticMomentumBalance1D,
     setup_publication_style,
+    save_strain_history,
     EXPERIMENTAL_DATA_T,
     EXPERIMENTAL_DATA_EPS,
     SIM_1D_T,
@@ -39,127 +41,161 @@ from src.viscoelastic_porepy import (
 os.makedirs("_output", exist_ok=True)
 
 # =====================================================================
-# Material constants (from article Section 4.1, Table in text)
+# Material constants (from article Section 4.1)
 # =====================================================================
-SIGMA_0 = 3.0       # MPa — applied constant stress
-E1 = 2143.0          # MPa — elastic modulus of spring E₁
-E2 = 584.0           # MPa — elastic modulus of spring E₂ (Maxwell branch)
-ETA = 180.0          # MPa·h — viscosity of dashpot η
+# nu = 0 ensures that the 2D plane-strain Lame formulation
+# reduces to the 1D modulus relation (lambda=0, mu=E/2,
+# so lambda+2*mu = E).  With nu > 0 the effective modulus
+# would be E(1-nu)/((1+nu)(1-2nu)) != E, giving a ~30%
+# discrepancy vs. the 1D analytical solution.
+NU = 0.0
+E1 = 2_143_000_000.0          # 2143 MPa in Pa
+E2 = 584_000_000.0            # 584 MPa in Pa
+ETA = 180_000_000.0 * (60.0 * 60.0)  # 180 MPa·h -> Pa·s
 
-# Derived
-TAU = ETA * (E1 + E2) / (E1 * E2)  # relaxation time [h]
-
-
-def j_body_creep_1d(t, sigma0, e1, e2, eta):
-    """Analytical 1D creep strain from J-body model (article eq. 3).
-
-    Parameters
-    ----------
-    t : array_like
-        Time [h].
-    sigma0 : float
-        Applied constant stress [MPa].
-    e1, e2 : float
-        Elastic moduli [MPa].
-    eta : float
-        Viscosity [MPa·h].
-
-    Returns
-    -------
-    eps : ndarray
-        Strain (dimensionless).
-    """
-    tau = eta * (e1 + e2) / (e1 * e2)
-    eps = (sigma0 / e1) * (1.0 - e2 / (e1 + e2) * np.exp(-t / tau))
-    return eps
+DT = 1.0 * pp.SECOND
+FINAL_TIME = 8.0 * pp.HOUR
 
 
 # =====================================================================
 # Run
 # =====================================================================
 def run_1d():
-    """Execute the 1D analytical simulation and produce the comparison plot."""
+    """Execute the quasi-1D PorePy simulation and produce the comparison plot."""
     setup_publication_style()
 
+    # Derived quantities for info
+    mu2 = E2 / (2.0 * (1.0 + NU))
+    tau = ETA / mu2
+
     print("=" * 60)
-    print("  1D analytical creep -- J-body model (Lv et al., 2019)")
-    print(f"  sigma_0 = {SIGMA_0:.1f} MPa")
-    print(f"  E1 = {E1:.0f} MPa, E2 = {E2:.0f} MPa")
-    print(f"  eta = {ETA:.0f} MPa*h")
-    print(f"  tau = eta*(E1+E2)/(E1*E2) = {TAU:.4f} h")
+    print("  Quasi-1D viscoelastic creep -- PorePy simulation")
+    print(f"  sigma_0 = 3 MPa (applied as boundary traction)")
+    print(f"  E1 = {E1/1e6:.0f} MPa, E2 = {E2/1e6:.0f} MPa")
+    print(f"  nu = {NU}")
+    print(f"  eta = {ETA:.4e} Pa*s")
+    print(f"  tau = eta/mu2 = {tau:.2e} s = {tau/3600:.2f} h")
+    print(f"  dt = {DT:.1f} s, T = {FINAL_TIME/3600:.1f} h")
     print("=" * 60)
 
-    # --- Compute 1D analytical strain ---
-    t_ana = np.linspace(0, 8, 500)
-    eps_ana = j_body_creep_1d(t_ana, SIGMA_0, E1, E2, ETA)
-
-    # Convert to percent
-    eps_ana_pct = eps_ana * 100.0
-
-    # --- Reference 1D curve from article (digitized, smooth interpolation) ---
-    interp_1d = PchipInterpolator(SIM_1D_T, SIM_1D_EPS)
-    t_1d_ref = np.linspace(0, 8, 200)
-    eps_1d_ref = interp_1d(t_1d_ref)
-
-    # --- Print comparison at key times ---
-    print("\n  Time [h]   eps_1D_calc [%]  eps_1D_article [%]  diff [%]")
-    print("  " + "-" * 55)
-    for t_check in [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]:
-        calc = j_body_creep_1d(t_check, SIGMA_0, E1, E2, ETA) * 100.0
-        ref = float(interp_1d(t_check))
-        diff = calc - ref
-        print(f"  {t_check:7.1f}     {calc:12.4f}       {ref:12.4f}      {diff:+.4f}")
-
-    # --- Plot ---
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    # Experimental data
-    ax.plot(
-        EXPERIMENTAL_DATA_T,
-        EXPERIMENTAL_DATA_EPS,
-        "bD",
-        markersize=6,
-        label="Experimental data",
+    # --- Build model ---
+    solid = ViscoelasticSolidConstants(
+        shear_modulus=E1 / (2.0 * (1.0 + NU)),
+        shear_modulus2=mu2,
+        lame_lambda=E1 * NU / ((1.0 + NU) * (1.0 - 2.0 * NU)),
+        lame_lambda2=E2 * NU / ((1.0 + NU) * (1.0 - 2.0 * NU)),
+        viscosity=ETA,
     )
 
-    # 1D reference from article (digitized)
-    ax.plot(
-        t_1d_ref,
-        eps_1d_ref,
-        "k--",
-        linewidth=1.5,
-        label="1D simulation (article, digitized)",
+    time_manager = pp.TimeManager(
+        schedule=[0.0, FINAL_TIME],
+        dt_init=DT,
+        dt_min_max=(DT, FINAL_TIME),
     )
 
-    # Our 1D analytical result
-    ax.plot(
-        t_ana,
-        eps_ana_pct,
-        "r-",
-        linewidth=2.0,
-        label="1D analytical (eq. 3, this work)",
-    )
+    params = {
+        "material_constants": {
+            "solid": solid,
+            "fluid": pp.FluidComponent(),
+        },
+        "time_manager": time_manager,
+        "cell_size": 0.00125,
+        "grid_type": "cartesian",
+        "snapshot_times": [FINAL_TIME],
+    }
 
-    ax.set_xlabel("Time (h)", fontsize=13)
-    ax.set_ylabel("Strain (%)", fontsize=13)
-    ax.set_xlim(0, 8)
-    ax.set_ylim(0.09, 0.15)
-    ax.legend(
-        framealpha=1.0,
-        edgecolor="black",
-        fancybox=False,
-        loc="lower right",
-    )
-    ax.grid(True, alpha=0.3)
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.5)
-    ax.tick_params(
-        width=1.5, direction="in", top=True, right=True
-    )
-    fig.tight_layout()
-    fig.savefig("_output/strain_eyy_1d.png", dpi=300)
-    plt.close(fig)
-    print("\nSaved _output/strain_eyy_1d.png")
+    model = ViscoelasticMomentumBalance1D(params)
+    pp.run_time_dependent_model(model)
+    print("Simulation complete.")
+
+    # --- Save strain history ---
+    save_strain_history("_output/strain_1d.npz", model.strain_history)
+    print("Saved _output/strain_1d.npz")
+
+    # --- Plot ε_yy(t) ---
+    if len(model.strain_history["times"]) > 0:
+        t = np.array(model.strain_history["times"])
+        eyy_u = np.array(model.strain_history["eyy_u"])
+
+        # Correct for extensometer gauge-length bias.
+        # The strain recorder measures u_y at the top cells (mean y ≈ 0.095)
+        # and divides by the full domain height (0.1).  For uniform strain
+        # the true strain is u_y(y) / y, not u_y(y) / H, so we apply:
+        #   correction = H / y_mean_top ≈ 0.1 / 0.095 ≈ 1.053
+        sd = model.mdg.subdomains(dim=model.nd)[0]
+        y_mean_top = np.mean(sd.cell_centers[1, model._top_cells])
+        correction = model._domain_height / y_mean_top
+        eyy_u = eyy_u * correction
+
+        # Reference 1D curve from article (digitized, smooth interpolation)
+        interp_1d = PchipInterpolator(SIM_1D_T, SIM_1D_EPS)
+        t_1d_ref = np.linspace(0, 8, 200)
+        eps_1d_ref = interp_1d(t_1d_ref)
+
+        # --- Print comparison at key times ---
+        print("\n  Time [h]   eps_PorePy [%]   eps_article [%]   diff [%]")
+        print("  " + "-" * 55)
+        for t_check in [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]:
+            # Find nearest simulation time
+            idx = np.argmin(np.abs(t - t_check))
+            sim_val = np.abs(eyy_u[idx]) * 100.0
+            ref_val = float(interp_1d(t_check))
+            diff = sim_val - ref_val
+            print(
+                f"  {t_check:7.1f}     {sim_val:12.4f}       "
+                f"{ref_val:12.4f}      {diff:+.4f}"
+            )
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        # Experimental data
+        ax.plot(
+            EXPERIMENTAL_DATA_T,
+            EXPERIMENTAL_DATA_EPS,
+            "bD",
+            markersize=6,
+            label="Experimental data",
+        )
+
+        # 1D reference from article (digitized)
+        ax.plot(
+            t_1d_ref,
+            eps_1d_ref,
+            "k--",
+            linewidth=1.5,
+            label="1D simulation (article, digitized)",
+        )
+
+        # Our quasi-1D PorePy result
+        ax.plot(
+            t,
+            np.abs(eyy_u) * 100,
+            "r-",
+            linewidth=2.0,
+            label="Quasi-1D simulation (PorePy)",
+        )
+
+        ax.set_xlabel("Time (h)", fontsize=13)
+        ax.set_ylabel("Strain (%)", fontsize=13)
+        ax.set_xlim(0, 8)
+        ax.set_ylim(0.09, 0.15)
+        ax.legend(
+            framealpha=1.0,
+            edgecolor="black",
+            fancybox=False,
+            loc="lower right",
+        )
+        ax.grid(True, alpha=0.3)
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)
+        ax.tick_params(
+            width=1.5, direction="in", top=True, right=True
+        )
+        fig.tight_layout()
+        fig.savefig("_output/strain_eyy_1d.png", dpi=300)
+        plt.close(fig)
+        print("\nSaved _output/strain_eyy_1d.png")
+
     print("Done.")
 
 

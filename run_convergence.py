@@ -177,10 +177,10 @@ if __name__ == "__main__":
             resolution,
             errors,
             "o-",
-            color="#1f77b4",
+            color="black",
             markerfacecolor="white",
             markeredgewidth=1.4,
-            markeredgecolor="#1f77b4",
+            markeredgecolor="black",
             zorder=5,
             label=(
                 r"$\|\mathbf{u} - \mathbf{u}_h\|_{L^2}"

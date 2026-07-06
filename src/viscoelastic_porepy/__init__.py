@@ -14,6 +14,7 @@ from .model import (
     ViscoelasticModelMixin,
     ViscoelasticMomentumBalance,
     ViscoelasticMomentumBalanceFracture,
+    ViscoelasticMomentumBalance1D,
 )
 from .utils import (
     compute_strain_at_cell,
@@ -33,6 +34,7 @@ __all__ = [
     "ViscoelasticModelMixin",
     "ViscoelasticMomentumBalance",
     "ViscoelasticMomentumBalanceFracture",
+    "ViscoelasticMomentumBalance1D",
     "compute_strain_at_cell",
     "setup_publication_style",
     "save_convergence_results",

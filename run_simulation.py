@@ -22,7 +22,7 @@ def print_help():
     print("  python run_simulation.py <mode>")
     print()
     print("Available modes:")
-    print("  1D        -- 1D analytical creep (J-body model, eq. 3 from article)")
+    print("  1D        -- Quasi-1D PorePy simulation (uniaxial creep)")
     print("  2D        -- 2D PorePy simulation without fracture")
     print("  2D_frac   -- 2D PorePy simulation with fracture")
     print()
@@ -40,7 +40,7 @@ def main():
     mode = sys.argv[1].strip().upper()
 
     if mode == "1D":
-        print("Running 1D analytical simulation...")
+        print("Running quasi-1D PorePy simulation...")
         from run_simulation_1d import run_1d
         run_1d()
 

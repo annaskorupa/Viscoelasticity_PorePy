@@ -119,7 +119,7 @@ if __name__ == "__main__":
     t3, e3 = run_creep_paper(**{**base_params, 'sigma_0': 12.0, 't_end_hours': 1.1})
     plot_and_save("plot_1_sigma", [(t1, e1), (t2, e2), (t3, e3)], 
                   [r"Experimental data with $\sigma_0 = 3.0 MPa$", r"Experimental data with $\sigma_0 = 6.0 MPa$", r"Experimental data with $\sigma_0 = 12.0 MPa$"], 
-                  ['blue', 'red', 'green'], ['x', 's', 'o'], 
+                  ['blue', 'green', 'red'], ['x', 's', 'o'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", ylim=(0, 1.2), xlim=(0, 6))
 
     # 2. vs Zener
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     t2, e2 = run_creep_paper(**{**base_params, 't_end_hours': 8.0, 'sigma_0': 3.0})
     plot_and_save("plot_2_zener", [(t2, e2), (t1, e1)], 
                   [r"Simulation with present model", r"Simulation with classical Zener Model"], 
-                  ['black', 'purple'], ['None', 'None'], 
+                  ['blue', 'red'], ['None', 'None'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0, 8.0))
 
     # 3. vs Burgers
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     t2, e2 = run_creep_paper(**{**base_params, 't_end_hours': 1.1})
     plot_and_save("plot_3_burgers", [(t2, e2), (t1, e1)], 
                   [r"Simulation with present model", r"Simulation with classical Burgers model"], 
-                  ['black', 'blue'], ['None', 'None'], 
+                  ['blue', 'red'], ['None', 'None'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0.1, 1.05))
 
     # 4. Varying alpha
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     t3, e3 = run_creep_paper(**{**base_params, 'alpha': 0.95})
     plot_and_save("plot_4_alpha", [(t1, e1), (t2, e2), (t3, e3)], 
                   [r"$\alpha = 0.65$", r"$\alpha = 0.80$", r"$\alpha = 0.95$"], 
-                  ['red', 'blue', 'black'], ['*', 'x', 'o'], 
+                  ['blue', 'green', 'red'], ['*', 'x', 'o'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0.1, 1.1))
 
     # 5. Varying beta
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     t3, e3 = run_creep_paper(**{**base_params, 'beta': 0.8})
     plot_and_save("plot_5_beta", [(t1, e1), (t2, e2), (t3, e3)], 
                   [r"$\beta = 0.2$", r"$\beta = 0.5$", r"$\beta = 0.8$"], 
-                  ['black', 'blue', 'red'], ['o', 'x', '*'], 
+                  ['blue', 'green', 'red'], ['o', 'x', '*'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0.1, 1.1))
 
     # 6. Varying omega
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     t3, e3 = run_creep_paper(**{**base_params, 'omega': 3.0, 't_end_hours': 4.0})
     plot_and_save("plot_6_omega", [(t1, e1), (t2, e2), (t3, e3)], 
                   [r"$\omega = 12.0 h^{-1}$", r"$\omega = 6.0 h^{-1}$", r"$\omega = 3.0 h^{-1}$"], 
-                  ['black', 'blue', 'red'], ['o', 'x', '*'], 
+                  ['blue', 'green', 'red'], ['o', 'x', '*'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0, 4.0))
 
     # 7. Varying eta1
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     t3, e3 = run_creep_paper(**{**base_params, 'eta1': 0.92e3})
     plot_and_save("plot_7_eta1", [(t1, e1), (t2, e2), (t3, e3)], 
                   [r"$\eta_1 = 0.52 GPa\cdot h^\alpha$", r"$\eta_1 = 0.69 GPa\cdot h^\alpha$", r"$\eta_1 = 0.92 GPa\cdot h^\alpha$"], 
-                  ['black', 'blue', 'red'], ['o', 'x', '*'], 
+                  ['blue', 'green', 'red'], ['o', 'x', '*'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0, 1.1))
 
     # 8. Varying eta20
@@ -187,7 +187,7 @@ if __name__ == "__main__":
     t3, e3 = run_creep_paper(**{**base_params, 'eta20': 8.21e9})
     plot_and_save("plot_8_eta20", [(t1, e1), (t2, e2), (t3, e3)], 
                   [r"$\eta_{20} = 8.21\times10^4 GPa\cdot h^\beta$", r"$\eta_{20} = 8.21\times10^5 GPa\cdot h^\beta$", r"$\eta_{20} = 8.21\times10^6 GPa\cdot h^\beta$"], 
-                  ['black', 'blue', 'red'], ['o', 'x', '*'], 
+                  ['blue', 'green', 'red'], ['o', 'x', '*'], 
                   r"$t$ (h)", r"$\epsilon$ (%)", "", xlim=(0.1, 1.1))
 
     print("Plots generated successfully in _output/ directory.")

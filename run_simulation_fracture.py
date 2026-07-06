@@ -131,7 +131,7 @@ if __name__ == "__main__":
             np.abs(eyy_u) * 100,
             "r-",
             linewidth=1.5,
-            label="2D simulation (PorePy, fracture)",
+            label="2D simulation (fracture)",
         )
         ax.set_xlabel("Time (h)", fontsize=13)
         ax.set_ylabel("Strain (%)", fontsize=13)

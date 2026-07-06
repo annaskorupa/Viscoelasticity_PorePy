@@ -15,10 +15,10 @@ import numpy as np
 import porepy as pp
 import matplotlib.pyplot as plt
 
-from .geometry import GeometryMixin, FractureGeometryMixin
+from .geometry import GeometryMixin, FractureGeometryMixin, Quasi1DGeometryMixin
 from .constitutive import ConstitutiveLawsU2
 from .variables import VariablesU2, RateEquation
-from .boundary_conditions import BoundaryConditionsMixin
+from .boundary_conditions import BoundaryConditionsMixin, RollerBoundaryConditionsMixin
 from .infrastructure import (
     InitialConditionsU2,
     SolutionStrategyU2,
@@ -246,6 +246,7 @@ class ViscoelasticModelMixin:
             cell_value=mag,
             title=title,
             if_plot=False,
+            color_map="viridis",
             color_map_limits=[0.0, vmax],
             plot_2d=True,
         )
@@ -292,5 +293,26 @@ class ViscoelasticMomentumBalanceFracture(
     pp.MomentumBalance,
 ):
     """Viscoelastic momentum balance with a diagonal fracture."""
+
+    pass
+
+
+class ViscoelasticMomentumBalance1D(
+    Quasi1DGeometryMixin,
+    RollerBoundaryConditionsMixin,
+    BodyForceMixin,
+    RateEquation,
+    VariablesU2,
+    ConstitutiveLawsU2,
+    InitialConditionsU2,
+    SolutionStrategyU2,
+    ViscoelasticModelMixin,
+    pp.MomentumBalance,
+):
+    """Viscoelastic momentum balance on a quasi-1D strip (uniaxial).
+
+    Uses a narrow 2D domain (one cell wide) with roller boundary
+    conditions on the lateral faces to enforce 1D-like behaviour.
+    """
 
     pass
