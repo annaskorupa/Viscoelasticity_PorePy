@@ -65,7 +65,7 @@ def main():
 
         os.makedirs("_output", exist_ok=True)
 
-        NU = 0.3
+        NU = 0.0
         E1 = 2_143_000_000.0
         E2 = 584_000_000.0
         ETA = 180000000.0 * (60.0 * 60.0)
@@ -183,7 +183,7 @@ def main():
 
         os.makedirs("_output", exist_ok=True)
 
-        NU = 0.3
+        NU = 0.0
         E1 = 2_143_000_000.0
         E2 = 584_000_000.0
         ETA = 180000000.0 * (60.0 * 60.0)
