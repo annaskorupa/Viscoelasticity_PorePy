@@ -1,4 +1,14 @@
-visualization/*
-__pycache__/*
+# Wyniki symulacji
+visualization/
+_output/
 
-_output/*
+# Python cache
+__pycache__/
+*.pyc
+
+# Pliki generowane
+*.msh
+*.geo_unrolled
+
+# Wykresy generowane przez skrypty
+*.png
