@@ -37,24 +37,9 @@ from src.viscoelastic_porepy import (
     SIM_1D_T,
     SIM_1D_EPS,
 )
+from config import NU, E1, E2, ETA, DT, FINAL_TIME
 
 os.makedirs("_output", exist_ok=True)
-
-# =====================================================================
-# Material constants (from article Section 4.1)
-# =====================================================================
-# nu = 0 ensures that the 2D plane-strain Lame formulation
-# reduces to the 1D modulus relation (lambda=0, mu=E/2,
-# so lambda+2*mu = E).  With nu > 0 the effective modulus
-# would be E(1-nu)/((1+nu)(1-2nu)) != E, giving a ~30%
-# discrepancy vs. the 1D analytical solution.
-NU = 0.0
-E1 = 2_143_000_000.0          # 2143 MPa in Pa
-E2 = 584_000_000.0            # 584 MPa in Pa
-ETA = 180_000_000.0 * (60.0 * 60.0)  # 180 MPa·h -> Pa·s
-
-DT = 1.0 * pp.SECOND
-FINAL_TIME = 8.0 * pp.HOUR
 
 
 # =====================================================================

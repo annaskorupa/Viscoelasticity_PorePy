@@ -11,6 +11,8 @@ Without arguments, displays help.
 
 import sys
 
+from config import NU, E1, E2, ETA, DT, FINAL_TIME
+
 
 def print_help():
     """Print usage information."""
@@ -64,13 +66,6 @@ def main():
         )
 
         os.makedirs("_output", exist_ok=True)
-
-        NU = 0.0
-        E1 = 2_143_000_000.0
-        E2 = 584_000_000.0
-        ETA = 180000000.0 * (60.0 * 60.0)
-        DT = 1.0 * pp.SECOND
-        FINAL_TIME = 8.0 * pp.HOUR
 
         setup_publication_style()
 
@@ -182,13 +177,6 @@ def main():
         )
 
         os.makedirs("_output", exist_ok=True)
-
-        NU = 0.0
-        E1 = 2_143_000_000.0
-        E2 = 584_000_000.0
-        ETA = 180000000.0 * (60.0 * 60.0)
-        DT = 1.0 * pp.SECOND
-        FINAL_TIME = 8.0 * pp.HOUR
 
         setup_publication_style()
 

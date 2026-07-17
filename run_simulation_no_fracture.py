@@ -27,19 +27,9 @@ from src.viscoelastic_porepy import (
     SIM_1D_T,
     SIM_1D_EPS,
 )
+from config import NU, E1, E2, ETA, DT, FINAL_TIME
 
 os.makedirs("_output", exist_ok=True)
-
-# =====================================================================
-# Material constants
-# =====================================================================
-NU = 0.0
-E1 = 2_143_000_000.0          # 2143 MPa
-E2 = 584_000_000.0            # 584 MPa
-ETA = 180000000.0 * (60.0 * 60.0)  # Pa·s
-
-DT = 1.0 * pp.SECOND
-FINAL_TIME = 8.0 * pp.HOUR
 
 # =====================================================================
 # Run
